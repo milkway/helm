@@ -25,6 +25,8 @@ pub fn run() {
             db::list_hosts,
             db::save_host,
             db::delete_host,
+            db::get_pref,
+            db::set_pref,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

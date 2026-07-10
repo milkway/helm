@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-// entry point
+// entry point do Helm
 import App from "./App";
 import "./styles/fonts.css";
 import "./styles/tokens.css";

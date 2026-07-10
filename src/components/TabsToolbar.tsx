@@ -1,25 +1,27 @@
-import { detachSession } from "../lib/ipc";
+import { closeTab, detachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
+import { useUiStore, type GridCols } from "../stores/ui";
 import { statusColor, tmuxSessionName } from "../types";
+
+const DENSITIES: GridCols[] = [2, 3, 4];
 
 export function TabsToolbar() {
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
   const focus = useSessionsStore((s) => s.focus);
-  const close = useSessionsStore((s) => s.close);
   const open = useSessionsStore((s) => s.open);
   const hosts = useHostsStore((s) => s.hosts);
+  const view = useUiStore((s) => s.view);
+  const setView = useUiStore((s) => s.setView);
+  const gridCols = useUiStore((s) => s.gridCols);
+  const setGridCols = useUiStore((s) => s.setGridCols);
 
   const hostName = (hostId: string) => hosts.find((h) => h.id === hostId)?.name ?? hostId;
   const activeSession = sessions.find((s) => s.id === activeId);
   const activeHost = activeSession ? hosts.find((h) => h.id === activeSession.hostId) : undefined;
   const tmuxActive =
     activeSession?.status === "connected" && activeHost?.autoAttach ? activeHost : undefined;
-
-  const detach = () => {
-    if (tmuxActive && activeSession?.ptyId) void detachSession(activeSession.ptyId);
-  };
 
   return (
     <div className="tabsbar">
@@ -37,7 +39,7 @@ export function TabsToolbar() {
               className="tab__close"
               onClick={(e) => {
                 e.stopPropagation();
-                close(session.id);
+                closeTab(session.id);
               }}
             >
               ×
@@ -65,7 +67,9 @@ export function TabsToolbar() {
           className="detach-btn"
           title="Detach — keeps running on server"
           style={tmuxActive ? undefined : { opacity: 0.45, cursor: "default" }}
-          onClick={detach}
+          onClick={() => {
+            if (tmuxActive && activeSession) detachTab(activeSession.id);
+          }}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="2">
             <path d="M12 4l-6 6h4v6h4v-6h4z" fill="#e0a15e" stroke="none" />
@@ -73,14 +77,36 @@ export function TabsToolbar() {
           </svg>
           <span className="detach-btn__label">Detach</span>
         </div>
+        {view === "grid" && (
+          <div className="seg-control seg-control--mono">
+            {DENSITIES.map((n) => (
+              <div
+                key={n}
+                title={`${n} colunas`}
+                className={`seg-control__btn seg-control__btn--wide${gridCols === n ? " seg-control__btn--on" : ""}`}
+                onClick={() => setGridCols(n)}
+              >
+                {n}×
+              </div>
+            ))}
+          </div>
+        )}
         <div className="seg-control">
-          <div className="seg-control__btn seg-control__btn--on" title="Terminal view">
+          <div
+            className={`seg-control__btn${view === "term" ? " seg-control__btn--on" : ""}`}
+            title="Terminal view"
+            onClick={() => setView("term")}
+          >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="3" y="4" width="18" height="16" rx="2" />
               <path d="M7 9l3 3-3 3M12 15h5" />
             </svg>
           </div>
-          <div className="seg-control__btn" title="Grid view — all sessions">
+          <div
+            className={`seg-control__btn${view === "grid" ? " seg-control__btn--on" : ""}`}
+            title="Grid view — all sessions"
+            onClick={() => setView("grid")}
+          >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="3" y="3" width="7" height="7" rx="1" />
               <rect x="14" y="3" width="7" height="7" rx="1" />

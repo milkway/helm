@@ -1,8 +1,9 @@
 import { retrySession } from "../lib/ipc";
+import { reattachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { hostAddr, type Host, type SessionInfo } from "../types";
-import { Term } from "./Term";
+import { TermHost } from "./TermHost";
 
 function ConnectingOverlay({ host, reconnect, attempt }: { host?: Host; reconnect: boolean; attempt: number | null }) {
   return (
@@ -24,14 +25,12 @@ function ConnectingOverlay({ host, reconnect, attempt }: { host?: Host; reconnec
 
 /** Tela de erro pós-falha — design 3d. */
 function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) {
-  const reattach = useSessionsStore((s) => s.reattach);
-
   const retryNow = () => {
     if (session.ptyId) {
       // sessão ainda viva no Rust aguardando o ciclo de 60s
-      void retrySession(session.ptyId).catch(() => reattach(session.id));
+      void retrySession(session.ptyId).catch(() => reattachTab(session.id));
     } else {
-      reattach(session.id);
+      reattachTab(session.id);
     }
   };
 
@@ -75,7 +74,6 @@ function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) 
 }
 
 function DetachedOverlay({ session, host }: { session: SessionInfo; host?: Host }) {
-  const reattach = useSessionsStore((s) => s.reattach);
   return (
     <div className="error-overlay">
       <div className="error-card error-card--detached">
@@ -89,7 +87,10 @@ function DetachedOverlay({ session, host }: { session: SessionInfo; host?: Host 
           </div>
         </div>
         <div className="error-card__actions">
-          <div className="error-card__btn error-card__btn--primary" onClick={() => reattach(session.id)}>
+          <div
+            className="error-card__btn error-card__btn--primary"
+            onClick={() => reattachTab(session.id)}
+          >
             Re-atachar
           </div>
         </div>
@@ -122,11 +123,12 @@ export function TerminalView() {
             key={session.id}
             className={`term term-pane${session.id === activeId ? "" : " term-pane--hidden"}`}
           >
-            <Term
+            <TermHost
               key={`${session.id}:${session.generation}`}
               uiId={session.id}
               hostId={session.hostId}
               active={session.id === activeId}
+              fontSize={13}
             />
             {(session.status === "connecting" || session.status === "reconnecting") && (
               <ConnectingOverlay

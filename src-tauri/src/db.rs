@@ -165,6 +165,29 @@ pub fn save_host(db: State<'_, Db>, host: Host) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn get_pref(db: State<'_, Db>, key: String) -> Result<Option<String>, String> {
+    let conn = db.0.lock().unwrap();
+    conn.query_row("SELECT value FROM ui_prefs WHERE key = ?1", [key], |r| r.get(0))
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            e => Err(e.to_string()),
+        })
+}
+
+#[tauri::command]
+pub fn set_pref(db: State<'_, Db>, key: String, value: String) -> Result<(), String> {
+    let conn = db.0.lock().unwrap();
+    conn.execute(
+        "INSERT INTO ui_prefs (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = ?2",
+        rusqlite::params![key, value],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn delete_host(db: State<'_, Db>, id: String) -> Result<(), String> {
     let conn = db.0.lock().unwrap();
     conn.execute("DELETE FROM hosts WHERE id = ?1", [id])
