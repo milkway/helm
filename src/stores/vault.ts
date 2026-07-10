@@ -43,7 +43,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   busy: false,
   error: null,
 
-  openModal: () => set({ modalOpen: true, error: null }),
+  openModal: () => set({ modalOpen: true, error: null, busy: false }),
   closeModal: () => set({ modalOpen: false }),
 
   refresh: async () => {
@@ -56,6 +56,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   },
 
   unlock: async () => {
+    if (get().busy) return;
     set({ busy: true, error: null });
     try {
       const status = await invoke<VaultStatus>("vault_unlock");

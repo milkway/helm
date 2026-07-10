@@ -10,9 +10,9 @@ export function TabsToolbar() {
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
   const focus = useSessionsStore((s) => s.focus);
-  const open = useSessionsStore((s) => s.open);
   const hosts = useHostsStore((s) => s.hosts);
   const view = useUiStore((s) => s.view);
+  const openModal = useUiStore((s) => s.openModal);
   const setView = useUiStore((s) => s.setView);
   const gridCols = useUiStore((s) => s.gridCols);
   const setGridCols = useUiStore((s) => s.setGridCols);
@@ -20,8 +20,16 @@ export function TabsToolbar() {
   const hostName = (hostId: string) => hosts.find((h) => h.id === hostId)?.name ?? hostId;
   const activeSession = sessions.find((s) => s.id === activeId);
   const activeHost = activeSession ? hosts.find((h) => h.id === activeSession.hostId) : undefined;
-  const tmuxActive =
-    activeSession?.status === "connected" && activeHost?.autoAttach ? activeHost : undefined;
+  const activeUsesTmux =
+    activeSession?.params != null
+      ? activeSession.params.mode !== "shell"
+      : (activeHost?.autoAttach ?? false) || (activeHost && activeHost.startupMode !== "shell");
+  const tmuxActive = activeSession?.status === "connected" && activeUsesTmux ? activeHost : undefined;
+  const tmuxName = activeSession?.params?.sessionName
+    ? tmuxSessionName(activeSession.params.sessionName)
+    : tmuxActive
+      ? tmuxSessionName(tmuxActive.name)
+      : null;
 
   return (
     <div className="tabsbar">
@@ -34,7 +42,9 @@ export function TabsToolbar() {
             onClick={() => focus(session.id)}
           >
             <span className="tab__dot" style={{ background: statusColor(session.status) }} />
-            <span className="tab__label">{hostName(session.hostId)}</span>
+            <span className="tab__label">
+              {session.params?.sessionName ?? hostName(session.hostId)}
+            </span>
             <span
               className="tab__close"
               onClick={(e) => {
@@ -47,11 +57,13 @@ export function TabsToolbar() {
           </div>
         );
       })}
-      {activeSession && (
-        <div className="tabsbar__new" onClick={() => open(activeSession.hostId)}>
-          +
-        </div>
-      )}
+      <div
+        className="tabsbar__new"
+        title="Nova sessão…"
+        onClick={() => openModal({ kind: "newSession", hostId: activeSession?.hostId })}
+      >
+        +
+      </div>
       <div className="tabsbar__spacer" />
       <div className="tabsbar__right">
         <div className="tmux-badge" style={tmuxActive ? undefined : { opacity: 0.45 }}>
@@ -59,9 +71,7 @@ export function TabsToolbar() {
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <path d="M3 9h18M9 21V9" />
           </svg>
-          <span className="tmux-badge__label">
-            tmux: {tmuxActive ? tmuxSessionName(tmuxActive.name) : "—"}
-          </span>
+          <span className="tmux-badge__label">tmux: {tmuxName ?? "—"}</span>
         </div>
         <div
           className="detach-btn"

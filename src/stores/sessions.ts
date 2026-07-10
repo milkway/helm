@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { SessionParams } from "../lib/ipc";
 import type { SessionInfo, SessionStatus } from "../types";
 
 function timestamp(): string {
@@ -28,7 +29,7 @@ interface SessionsState {
   sessions: SessionInfo[];
   activeId: string | null;
   /** cria uma sessão (aba) para um host e a torna ativa */
-  open: (hostId: string) => string;
+  open: (hostId: string, params?: SessionParams) => string;
   focus: (id: string) => void;
   close: (id: string) => void;
   setStatus: (id: string, status: SessionStatus, attempt?: number | null, delaySecs?: number | null) => void;
@@ -41,7 +42,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
   sessions: [],
   activeId: null,
 
-  open: (hostId) => {
+  open: (hostId, params) => {
     const id = crypto.randomUUID();
     set((s) => ({
       sessions: [
@@ -55,6 +56,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
           ptyId: null,
           generation: 0,
           log: [],
+          params: params ?? null,
         },
       ],
       activeId: id,

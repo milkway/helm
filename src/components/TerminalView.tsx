@@ -2,6 +2,7 @@ import { retrySession } from "../lib/ipc";
 import { reattachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
+import { useUiStore } from "../stores/ui";
 import { hostAddr, type Host, type SessionInfo } from "../types";
 import { TermHost } from "./TermHost";
 
@@ -25,6 +26,7 @@ function ConnectingOverlay({ host, reconnect, attempt }: { host?: Host; reconnec
 
 /** Tela de erro pós-falha — design 3d. */
 function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) {
+  const openModal = useUiStore((s) => s.openModal);
   const retryNow = () => {
     if (session.ptyId) {
       // sessão ainda viva no Rust aguardando o ciclo de 60s
@@ -63,7 +65,12 @@ function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) 
           <div className="error-card__btn error-card__btn--primary" onClick={retryNow}>
             Tentar agora
           </div>
-          <div className="error-card__btn error-card__btn--secondary">Editar host</div>
+          <div
+            className="error-card__btn error-card__btn--secondary"
+            onClick={() => host && openModal({ kind: "editHost", hostId: host.id })}
+          >
+            Editar host
+          </div>
           <div className="error-card__btn error-card__btn--ghost">Ver log completo</div>
           <div className="error-card__spacer" />
           <div className="error-card__auto">retry auto: 60s</div>

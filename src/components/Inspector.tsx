@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
+import { useUiStore } from "../stores/ui";
 import { statusColor } from "../types";
 
 function uptime(connectedAt: number | null): string {
@@ -18,6 +19,7 @@ export function Inspector() {
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
   const hosts = useHostsStore((s) => s.hosts);
+  const openModal = useUiStore((s) => s.openModal);
 
   // rerender periódico para o uptime andar
   const [, setTick] = useState(0);
@@ -96,7 +98,11 @@ export function Inspector() {
               <div className="action-card__sub">keeps running on server</div>
             </div>
           </div>
-          <div className="action-card">
+          <div
+            className="action-card"
+            style={{ cursor: "pointer" }}
+            onClick={() => openModal({ kind: "installTmux", hostId: host.id })}
+          >
             <div className="action-card__icon">⟳</div>
             <div className="card-body">
               <div className="action-card__title">Install / attach tmux</div>

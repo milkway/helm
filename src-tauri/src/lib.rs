@@ -1,4 +1,5 @@
 mod db;
+mod remote;
 mod session;
 mod vault;
 
@@ -38,6 +39,9 @@ pub fn run() {
             vault::vault_save,
             vault::vault_delete,
             vault::vault_reveal,
+            remote::test_connection,
+            remote::detect_remote,
+            remote::install_tmux,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

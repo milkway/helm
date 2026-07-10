@@ -62,44 +62,84 @@ fn emit_vault_status(app: &AppHandle, locked: bool, count: i64) {
     let _ = app.emit("vault-status", VaultStatus { locked, count });
 }
 
+/// Distingue "biometria indisponível" (típico no binário de dev não
+/// empacotado) de "usuário recusou/cancelou".
+enum AuthError {
+    Unavailable(String),
+    Denied(String),
+}
+
 /// Autenticação do dono do dispositivo (Touch ID com fallback de senha).
+///
+/// A UI do LocalAuthentication PRECISA ser apresentada pela main thread do
+/// macOS — chamar `evaluatePolicy` de uma thread de background não mostra o
+/// prompt. Agendamos a chamada na main thread e esperamos o reply por canal.
 #[cfg(target_os = "macos")]
-fn authenticate_owner(reason: &str) -> Result<(), String> {
+fn evaluate_biometrics(app: &AppHandle, reason: &str) -> Result<(), AuthError> {
     use block2::RcBlock;
     use objc2_foundation::{NSError, NSString};
     use objc2_local_authentication::{LAContext, LAPolicy};
     use std::sync::mpsc;
 
-    let (tx, rx) = mpsc::channel::<Result<(), String>>();
-    let reason = NSString::from_str(reason);
-    unsafe {
-        let ctx = LAContext::new();
+    let (tx, rx) = mpsc::channel::<Result<(), AuthError>>();
+    let reason = reason.to_string();
+
+    app.run_on_main_thread(move || {
+        let policy = LAPolicy::DeviceOwnerAuthentication;
+        let ctx = unsafe { LAContext::new() };
+
+        if let Err(err) = unsafe { ctx.canEvaluatePolicy_error(policy) } {
+            let _ = tx.send(Err(AuthError::Unavailable(err.localizedDescription().to_string())));
+            return;
+        }
+
+        // clone do ctx capturado no reply → mantém o objeto vivo até o prompt
+        // resolver (sem isto o ctx é liberado e o macOS cancela o prompt).
+        let ctx_keep = ctx.clone();
         let block = RcBlock::new(move |success: objc2::runtime::Bool, error: *mut NSError| {
+            let _ = &ctx_keep;
             let result = if success.as_bool() {
                 Ok(())
             } else {
                 let msg = if error.is_null() {
                     "autenticação recusada".to_string()
                 } else {
-                    (*error).localizedDescription().to_string()
+                    unsafe { (*error).localizedDescription() }.to_string()
                 };
-                Err(msg)
+                Err(AuthError::Denied(msg))
             };
             let _ = tx.send(result);
         });
-        ctx.evaluatePolicy_localizedReason_reply(
-            LAPolicy::DeviceOwnerAuthentication,
-            &reason,
-            &block,
-        );
+
+        unsafe {
+            ctx.evaluatePolicy_localizedReason_reply(policy, &NSString::from_str(&reason), &block);
+        }
+    })
+    .map_err(|e| AuthError::Unavailable(format!("main thread: {e}")))?;
+
+    rx.recv_timeout(Duration::from_secs(60))
+        .map_err(|_| AuthError::Unavailable("sem resposta do sistema".into()))?
+}
+
+#[cfg(target_os = "macos")]
+fn authenticate_owner(app: &AppHandle, reason: &str) -> Result<(), String> {
+    // No binário de `tauri dev` (não empacotado, sem Info.plist) o prompt de
+    // Touch ID não sobe e a avaliação trava até dar timeout. Pulamos direto —
+    // o gate biométrico real vale no bundle de release (.app assinado).
+    if cfg!(debug_assertions) {
+        eprintln!("[vault] dev: destravando sem Touch ID (gate real só no bundle de release)");
+        return Ok(());
     }
-    rx.recv_timeout(Duration::from_secs(120))
-        .map_err(|_| "tempo esgotado na autenticação".to_string())?
+    match evaluate_biometrics(app, reason) {
+        Ok(()) => Ok(()),
+        Err(AuthError::Unavailable(msg)) => Err(format!("autenticação indisponível: {msg}")),
+        Err(AuthError::Denied(msg)) => Err(msg),
+    }
 }
 
 /// Linux: o Secret Service destrava junto com a sessão do usuário.
 #[cfg(not(target_os = "macos"))]
-fn authenticate_owner(_reason: &str) -> Result<(), String> {
+fn authenticate_owner(_app: &AppHandle, _reason: &str) -> Result<(), String> {
     Ok(())
 }
 
@@ -150,8 +190,9 @@ pub async fn vault_unlock(
     vault: State<'_, Vault>,
 ) -> Result<VaultStatus, String> {
     let inner = vault.0.clone();
+    let app_auth = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        authenticate_owner("destravar o cofre do Helm")?;
+        authenticate_owner(&app_auth, "destravar o cofre do Helm")?;
         inner.unlocked.store(true, Ordering::Relaxed);
         *inner.last_activity.lock().unwrap() = Instant::now();
         Ok::<(), String>(())
@@ -258,6 +299,7 @@ pub fn vault_delete(
 /// Revela um segredo — re-exige autenticação do dono (design 3c).
 #[tauri::command]
 pub async fn vault_reveal(
+    app: AppHandle,
     db: State<'_, Db>,
     vault: State<'_, Vault>,
     id: String,
@@ -265,7 +307,7 @@ pub async fn vault_reveal(
     require_unlocked(&vault.0)?;
     let reveal_id = id.clone();
     let secret = tauri::async_runtime::spawn_blocking(move || {
-        authenticate_owner("revelar uma credencial do cofre")?;
+        authenticate_owner(&app, "revelar uma credencial do cofre")?;
         keyring::Entry::new(KEYRING_SERVICE, &reveal_id)
             .map_err(|e| e.to_string())?
             .get_password()

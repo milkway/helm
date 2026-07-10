@@ -7,13 +7,57 @@ export function openLocalSession(id: string, cols: number, rows: number): Promis
   return invoke("open_local_session", { id, cols, rows });
 }
 
+export interface SessionParams {
+  mode: "shell" | "tmux" | "clmux";
+  sessionName?: string;
+  projectDir?: string;
+}
+
 export function openSshSession(
   id: string,
   hostId: string,
   cols: number,
   rows: number,
+  params?: SessionParams,
 ): Promise<void> {
-  return invoke("open_ssh_session", { id, hostId, cols, rows });
+  return invoke("open_ssh_session", { id, hostId, cols, rows, params: params ?? null });
+}
+
+export interface TestResult {
+  ok: boolean;
+  latencyMs: number;
+  tmux: string | null;
+  message: string | null;
+}
+
+export function testConnection(draft: {
+  user: string | null;
+  host: string;
+  port: number | null;
+}): Promise<TestResult> {
+  return invoke("test_connection", { draft });
+}
+
+export interface RemoteInfo {
+  os: string | null;
+  pkgManager: string | null;
+  tmux: string | null;
+}
+
+export function detectRemote(hostId: string): Promise<RemoteInfo> {
+  return invoke("detect_remote", { hostId });
+}
+
+export function installTmux(
+  hostId: string,
+  pkgManager: string,
+  auth: { credentialId?: string; password?: string },
+): Promise<string> {
+  return invoke("install_tmux", {
+    hostId,
+    pkgManager,
+    auth: { credentialId: auth.credentialId ?? null, password: auth.password ?? null },
+  });
 }
 
 export function writeStdin(id: string, data: string): Promise<void> {

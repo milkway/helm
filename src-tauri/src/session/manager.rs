@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use portable_pty::CommandBuilder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::{self, Db, Host};
@@ -83,7 +83,41 @@ pub fn tmux_session_name(name: &str) -> String {
     if s.is_empty() { "helm".into() } else { s }
 }
 
-fn build_command(host: Option<&Host>) -> Result<CommandBuilder, String> {
+/// Quoting seguro para shell remoto (single quotes).
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// Parâmetros por sessão (modal Nova sessão, 1c). Sem eles, valem os
+/// defaults do host (startup_mode / auto_attach / project_dir).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionParams {
+    /// shell | tmux | clmux
+    pub mode: String,
+    pub session_name: Option<String>,
+    pub project_dir: Option<String>,
+}
+
+/// Comando remoto conforme o modo. clmux: attach se a sessão existir; senão
+/// cria e digita `claude` nela (send-keys) — "abre o Claude dentro do tmux".
+fn remote_command(mode: &str, name: &str, dir: Option<&str>) -> Option<String> {
+    let name_q = shell_quote(name);
+    let cd = dir
+        .filter(|d| !d.is_empty())
+        .map(|d| format!("cd {} && ", shell_quote(d)))
+        .unwrap_or_default();
+    match mode {
+        "tmux" => Some(format!("{cd}tmux new -As {name_q}")),
+        "clmux" => Some(format!(
+            "{cd}if tmux has-session -t {name_q} 2>/dev/null; then tmux attach -t {name_q}; \
+             else tmux new -s {name_q} \\; send-keys claude Enter; fi"
+        )),
+        _ => None,
+    }
+}
+
+fn build_command(host: Option<&Host>, params: Option<&SessionParams>) -> Result<CommandBuilder, String> {
     match host {
         None => {
             let mut cmd = CommandBuilder::new(pty::default_shell());
@@ -117,9 +151,24 @@ fn build_command(host: Option<&Host>) -> Result<CommandBuilder, String> {
             };
             cmd.arg("--"); // terminador de argv: o alvo jamais é interpretado como flag
             cmd.arg(target);
-            if host.auto_attach {
-                // attach-or-create na sessão tmux do projeto
-                cmd.arg(format!("tmux new -As {}", tmux_session_name(&host.name)));
+
+            // modo efetivo: params > startup_mode do host; auto_attach eleva
+            // shell para tmux (re-attach automático, Fase 3)
+            let mode = match params {
+                Some(p) => p.mode.clone(),
+                None if host.auto_attach && host.startup_mode == "shell" => "tmux".into(),
+                None => host.startup_mode.clone(),
+            };
+            let name = params
+                .and_then(|p| p.session_name.clone())
+                .map(|n| tmux_session_name(&n))
+                .unwrap_or_else(|| tmux_session_name(&host.name));
+            let dir = params
+                .and_then(|p| p.project_dir.clone())
+                .or_else(|| host.project_dir.clone());
+
+            if let Some(remote) = remote_command(&mode, &name, dir.as_deref()) {
+                cmd.arg(remote);
             }
             cmd.env("TERM", "xterm-256color");
             Ok(cmd)
@@ -143,7 +192,13 @@ fn interruptible_sleep(session: &Session, secs: u64) -> bool {
     false
 }
 
-fn manager_loop(app: AppHandle, id: String, session: Arc<Session>, host: Option<Host>) {
+fn manager_loop(
+    app: AppHandle,
+    id: String,
+    session: Arc<Session>,
+    host: Option<Host>,
+    params: Option<SessionParams>,
+) {
     let auto_reconnect = host.as_ref().map(|h| h.auto_reconnect).unwrap_or(false);
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut attempt: u32 = 0;
@@ -158,7 +213,7 @@ fn manager_loop(app: AppHandle, id: String, session: Arc<Session>, host: Option<
         }
 
         let (cols, rows) = *session.size.lock().unwrap();
-        let cmd = match build_command(host.as_ref()) {
+        let cmd = match build_command(host.as_ref(), params.as_ref()) {
             Ok(cmd) => cmd,
             Err(e) => {
                 eprintln!("[session {id}] comando inválido: {e}");
@@ -255,6 +310,7 @@ fn start_session(
     host: Option<Host>,
     cols: u16,
     rows: u16,
+    params: Option<SessionParams>,
 ) {
     let session = Arc::new(Session {
         host_id: host.as_ref().map(|h| h.id.clone()),
@@ -265,7 +321,7 @@ fn start_session(
         io: Mutex::new(None),
     });
     sessions.0.lock().unwrap().insert(id.clone(), session.clone());
-    std::thread::spawn(move || manager_loop(app, id, session, host));
+    std::thread::spawn(move || manager_loop(app, id, session, host, params));
 }
 
 #[tauri::command]
@@ -276,7 +332,7 @@ pub fn open_local_session(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    start_session(app, &sessions, id, None, cols, rows);
+    start_session(app, &sessions, id, None, cols, rows, None);
     Ok(())
 }
 
@@ -289,9 +345,10 @@ pub fn open_ssh_session(
     host_id: String,
     cols: u16,
     rows: u16,
+    params: Option<SessionParams>,
 ) -> Result<(), String> {
     let host = db::get_host(&db, &host_id)?;
-    start_session(app, &sessions, id, Some(host), cols, rows);
+    start_session(app, &sessions, id, Some(host), cols, rows, params);
     Ok(())
 }
 

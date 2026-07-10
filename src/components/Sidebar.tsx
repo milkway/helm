@@ -1,6 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { deleteHost } from "../lib/ipc";
 import { groupHosts, useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
+import { useUiStore } from "../stores/ui";
 import { useVaultStore } from "../stores/vault";
 import { statusColor, type Host, type SessionInfo } from "../types";
 
@@ -13,6 +15,9 @@ function HostRow({ host }: { host: Host }) {
   const activeId = useSessionsStore((s) => s.activeId);
   const open = useSessionsStore((s) => s.open);
   const focus = useSessionsStore((s) => s.focus);
+  const openModal = useUiStore((s) => s.openModal);
+  const loadHosts = useHostsStore((s) => s.load);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   const session = hostSession(sessions, host.id);
   const isActive = session != null && session.id === activeId;
@@ -29,6 +34,10 @@ function HostRow({ host }: { host: Host }) {
     <div
       className={`host-row${isActive ? " host-row--active" : ""}`}
       onClick={() => (session ? focus(session.id) : open(host.id))}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
     >
       <span className={dotClasses.join(" ")} style={{ background: color, color }} />
       <div className="host-row__body">
@@ -36,13 +45,68 @@ function HostRow({ host }: { host: Host }) {
           <span className="host-row__name" style={{ color: nameColor }}>
             {host.name}
           </span>
-          {host.startupMode !== "shell" && <span className="host-row__tmux">tmux</span>}
+          {(host.autoAttach || host.startupMode !== "shell") && (
+            <span className="host-row__tmux">tmux</span>
+          )}
         </div>
         <div className="host-row__addr">
           {host.user ? `${host.user}@${host.host}` : host.host}
         </div>
       </div>
       {connecting && <span className="host-row__badge host-row__badge--reconnect">⟳</span>}
+      {menu && (
+        <>
+          <div
+            style={{ position: "fixed", inset: 0, zIndex: 79 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenu(null);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu(null);
+            }}
+          />
+          <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
+            <div
+              className="ctx-menu__item"
+              onClick={() => {
+                setMenu(null);
+                openModal({ kind: "newSession", hostId: host.id });
+              }}
+            >
+              Nova sessão…
+            </div>
+            <div
+              className="ctx-menu__item"
+              onClick={() => {
+                setMenu(null);
+                openModal({ kind: "editHost", hostId: host.id });
+              }}
+            >
+              Editar host…
+            </div>
+            <div
+              className="ctx-menu__item"
+              onClick={() => {
+                setMenu(null);
+                openModal({ kind: "installTmux", hostId: host.id });
+              }}
+            >
+              Instalar tmux…
+            </div>
+            <div
+              className="ctx-menu__item ctx-menu__item--danger"
+              onClick={() => {
+                setMenu(null);
+                void deleteHost(host.id).then(loadHosts);
+              }}
+            >
+              Excluir host
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -50,6 +114,7 @@ function HostRow({ host }: { host: Host }) {
 export function Sidebar() {
   const hosts = useHostsStore((s) => s.hosts);
   const load = useHostsStore((s) => s.load);
+  const openModal = useUiStore((s) => s.openModal);
 
   useEffect(() => {
     void load();
@@ -61,7 +126,14 @@ export function Sidebar() {
     <div className="sidebar">
       <div className="sidebar__header">
         <span className="sidebar__title">Hosts &amp; Sessions</span>
-        <div className="sidebar__add">+</div>
+        <div
+          className="sidebar__add"
+          style={{ cursor: "pointer" }}
+          title="Add host"
+          onClick={() => openModal({ kind: "addHost" })}
+        >
+          +
+        </div>
       </div>
 
       <div className="sidebar__list">

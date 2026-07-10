@@ -38,6 +38,8 @@ export interface SessionInfo {
   generation: number;
   /** log de eventos para a tela de erro (design 3d) */
   log: string[];
+  /** overrides da Nova sessão (1c); null = defaults do host */
+  params: import("./lib/ipc").SessionParams | null;
 }
 
 export const STATUS_COLORS = {
