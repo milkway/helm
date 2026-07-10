@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { groupHosts, useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
+import { useVaultStore } from "../stores/vault";
 import { statusColor, type Host, type SessionInfo } from "../types";
 
 function hostSession(sessions: SessionInfo[], hostId: string): SessionInfo | undefined {
@@ -83,19 +84,43 @@ export function Sidebar() {
         ))}
       </div>
 
-      <div className="vault-footer">
-        <div className="vault-footer__icon">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="1.8">
-            <rect x="4" y="10" width="16" height="11" rx="2" />
-            <path d="M8 10V7a4 4 0 0 1 8 0v3" />
-          </svg>
-        </div>
-        <div className="vault-footer__body">
-          <div className="vault-footer__title">Vault</div>
-          <div className="vault-footer__sub">disponível na Fase 5</div>
-        </div>
-        <div className="vault-footer__dot" style={{ background: "#565c64" }} />
+      <VaultFooter />
+    </div>
+  );
+}
+
+function VaultFooter() {
+  const locked = useVaultStore((s) => s.locked);
+  const count = useVaultStore((s) => s.count);
+  const openModal = useVaultStore((s) => s.openModal);
+
+  return (
+    <div className="vault-footer" onClick={openModal} style={{ cursor: "pointer" }}>
+      <div className="vault-footer__icon">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="1.8">
+          {locked ? (
+            <>
+              <rect x="4" y="10" width="16" height="11" rx="2" />
+              <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+            </>
+          ) : (
+            <>
+              <rect x="4" y="10" width="16" height="11" rx="2" />
+              <path d="M8 10V7a4 4 0 0 1 7.5-2" />
+            </>
+          )}
+        </svg>
       </div>
+      <div className="vault-footer__body">
+        <div className="vault-footer__title">{locked ? "Vault locked" : "Vault unlocked"}</div>
+        <div className="vault-footer__sub">
+          {count} credentials · Touch&nbsp;ID
+        </div>
+      </div>
+      <div
+        className="vault-footer__dot"
+        style={{ background: locked ? "#565c64" : "#63d29b" }}
+      />
     </div>
   );
 }

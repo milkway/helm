@@ -50,6 +50,17 @@ const MIGRATIONS: &[&str] = &[
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE TABLE ui_prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    // v2 — metadados de credenciais; o SEGREDO fica só no Keychain/Secret Service
+    "CREATE TABLE credentials_meta (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('ssh_key','password')),
+        label TEXT NOT NULL,
+        algo TEXT,
+        scope TEXT,
+        last_used TEXT
+    );",
+    // v3 — credenciais só-metadados (NOPASSWD, chave sem passphrase)
+    "ALTER TABLE credentials_meta ADD COLUMN has_secret INTEGER NOT NULL DEFAULT 1;",
 ];
 
 pub fn open(app: &AppHandle) -> Result<Connection, String> {

@@ -6,6 +6,7 @@ import { TerminalView } from "./components/TerminalView";
 import { GridView } from "./components/GridView";
 import { StatusBar } from "./components/StatusBar";
 import { Inspector } from "./components/Inspector";
+import { VaultModal } from "./components/VaultModal";
 import { useUiStore } from "./stores/ui";
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
         </div>
         <Inspector />
       </div>
+      <VaultModal />
     </div>
   );
 }
