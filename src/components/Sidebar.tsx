@@ -1,22 +1,33 @@
-import { GROUPS, STATUS_COLORS, type MockHost } from "../mock";
-import { useUiStore } from "../stores/ui";
+import { useEffect } from "react";
+import { groupHosts, useHostsStore } from "../stores/hosts";
+import { useSessionsStore } from "../stores/sessions";
+import { statusColor, type Host, type SessionInfo } from "../types";
 
-function HostRow({ host }: { host: MockHost }) {
-  const activeHostId = useUiStore((s) => s.activeHostId);
-  const selectHost = useUiStore((s) => s.selectHost);
-  const isActive = host.id === activeHostId;
-  const color = STATUS_COLORS[host.status];
-  const nameColor = isActive ? "#f4f6f8" : host.status === "idle" ? "#8b9199" : "#d2d6db";
+function hostSession(sessions: SessionInfo[], hostId: string): SessionInfo | undefined {
+  return sessions.find((s) => s.hostId === hostId);
+}
+
+function HostRow({ host }: { host: Host }) {
+  const sessions = useSessionsStore((s) => s.sessions);
+  const activeId = useSessionsStore((s) => s.activeId);
+  const open = useSessionsStore((s) => s.open);
+  const focus = useSessionsStore((s) => s.focus);
+
+  const session = hostSession(sessions, host.id);
+  const isActive = session != null && session.id === activeId;
+  const color = statusColor(session?.status);
+  const connected = session?.status === "connected";
+  const connecting = session?.status === "connecting";
+  const nameColor = isActive ? "#f4f6f8" : session ? "#d2d6db" : "#8b9199";
 
   const dotClasses = ["host-row__dot"];
-  if (host.status === "connected" || host.status === "attention") dotClasses.push("host-row__dot--glow");
-  if (host.status === "attention") dotClasses.push("host-row__dot--pulse");
-  if (host.status === "reconnect") dotClasses.push("host-row__dot--spin");
+  if (connected) dotClasses.push("host-row__dot--glow");
+  if (connecting) dotClasses.push("host-row__dot--spin");
 
   return (
     <div
       className={`host-row${isActive ? " host-row--active" : ""}`}
-      onClick={() => selectHost(host.id)}
+      onClick={() => (session ? focus(session.id) : open(host.id))}
     >
       <span className={dotClasses.join(" ")} style={{ background: color, color }} />
       <div className="host-row__body">
@@ -24,18 +35,27 @@ function HostRow({ host }: { host: MockHost }) {
           <span className="host-row__name" style={{ color: nameColor }}>
             {host.name}
           </span>
-          {host.tmux && <span className="host-row__tmux">tmux</span>}
+          {host.startupMode !== "shell" && <span className="host-row__tmux">tmux</span>}
         </div>
-        <div className="host-row__addr">{host.addr}</div>
+        <div className="host-row__addr">
+          {host.user ? `${host.user}@${host.host}` : host.host}
+        </div>
       </div>
-      {(host.status === "attention" || host.status === "reconnect") && (
-        <span className={`host-row__badge host-row__badge--${host.status}`}>{host.badge}</span>
-      )}
+      {connecting && <span className="host-row__badge host-row__badge--reconnect">⟳</span>}
     </div>
   );
 }
 
 export function Sidebar() {
+  const hosts = useHostsStore((s) => s.hosts);
+  const load = useHostsStore((s) => s.load);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const groups = groupHosts(hosts);
+
   return (
     <div className="sidebar">
       <div className="sidebar__header">
@@ -43,26 +63,18 @@ export function Sidebar() {
         <div className="sidebar__add">+</div>
       </div>
 
-      <div className="attention-banner">
-        <span className="attention-banner__dot" />
-        <div className="attention-banner__body">
-          <div className="attention-banner__title">1 session needs attention</div>
-          <div className="attention-banner__sub">gpu-train v3 · claude awaiting input</div>
-        </div>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f0785a" strokeWidth="2">
-          <path d="M9 6l6 6-6 6" />
-        </svg>
-      </div>
-
       <div className="sidebar__list">
-        {GROUPS.map((group) => (
+        {groups.length === 0 && (
+          <div className="sidebar__empty">Nenhum host ainda</div>
+        )}
+        {groups.map((group) => (
           <div className="group" key={group.name}>
             <div className="group__header">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
                 <path d="M6 9l6 6 6-6" />
               </svg>
               <span className="group__name">{group.name}</span>
-              <span className="group__count">{group.count}</span>
+              <span className="group__count">{group.hosts.length}</span>
             </div>
             {group.hosts.map((host) => (
               <HostRow key={host.id} host={host} />
@@ -79,10 +91,10 @@ export function Sidebar() {
           </svg>
         </div>
         <div className="vault-footer__body">
-          <div className="vault-footer__title">Vault unlocked</div>
-          <div className="vault-footer__sub">12 credentials · Touch&nbsp;ID</div>
+          <div className="vault-footer__title">Vault</div>
+          <div className="vault-footer__sub">disponível na Fase 5</div>
         </div>
-        <div className="vault-footer__dot" />
+        <div className="vault-footer__dot" style={{ background: "#565c64" }} />
       </div>
     </div>
   );

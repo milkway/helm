@@ -1,20 +1,48 @@
+import { useHostsStore } from "../stores/hosts";
+import { useSessionsStore } from "../stores/sessions";
 import { Term } from "./Term";
 
-// Fase 1: xterm vivo conectado a um PTY local (shell do sistema).
-// O toast de atenção segue como placeholder visual até a Fase 8.
+// Uma pane por sessão aberta, todas montadas (o xterm mantém buffer e estado);
+// as inativas ficam com visibility:hidden para preservar as dimensões.
 export function TerminalView() {
-  return (
-    <div className="term">
-      <Term sessionId="local" />
+  const sessions = useSessionsStore((s) => s.sessions);
+  const activeId = useSessionsStore((s) => s.activeId);
+  const hosts = useHostsStore((s) => s.hosts);
 
-      <div className="attn-toast">
-        <span className="attn-toast__dot" />
-        <div>
-          <div className="attn-toast__title">gpu-train v3 waiting</div>
-          <div className="attn-toast__sub">Claude asked a question 40s ago</div>
-        </div>
-        <div className="attn-toast__jump">Jump →</div>
+  if (sessions.length === 0) {
+    return (
+      <div className="term term--empty">
+        <span className="term__hint">Selecione um host na sidebar para abrir uma sessão</span>
       </div>
+    );
+  }
+
+  return (
+    <div className="term-stack">
+      {sessions.map((session) => {
+        const host = hosts.find((h) => h.id === session.hostId);
+        return (
+          <div
+            key={session.id}
+            className={`term term-pane${session.id === activeId ? "" : " term-pane--hidden"}`}
+          >
+            <Term uiId={session.id} hostId={session.hostId} active={session.id === activeId} />
+            {session.status === "connecting" && (
+              <div className="connect-overlay">
+                <span className="connect-overlay__spinner" />
+                <div>
+                  <div className="connect-overlay__title">
+                    Conectando a {host?.name ?? session.hostId}…
+                  </div>
+                  <div className="connect-overlay__sub">
+                    ssh {host ? (host.user ? `${host.user}@${host.host}` : host.host) : ""}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

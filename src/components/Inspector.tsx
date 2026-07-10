@@ -1,19 +1,77 @@
-import { META, ACTIONS } from "../mock";
+import { useEffect, useState } from "react";
+import { useHostsStore } from "../stores/hosts";
+import { useSessionsStore } from "../stores/sessions";
+import { statusColor } from "../types";
+
+function uptime(connectedAt: number | null): string {
+  if (!connectedAt) return "—";
+  const s = Math.floor((Date.now() - connectedAt) / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${String(m % 60).padStart(2, "0")}m`;
+  return `${Math.floor(h / 24)}d ${String(h % 24).padStart(2, "0")}h`;
+}
 
 export function Inspector() {
+  const sessions = useSessionsStore((s) => s.sessions);
+  const activeId = useSessionsStore((s) => s.activeId);
+  const hosts = useHostsStore((s) => s.hosts);
+
+  // rerender periódico para o uptime andar
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 10_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const session = sessions.find((s) => s.id === activeId);
+  const host = session ? hosts.find((h) => h.id === session.hostId) : undefined;
+
+  if (!session || !host) {
+    return (
+      <div className="inspector">
+        <div className="inspector__header">
+          <div className="inspector__host">
+            <span className="inspector__host-dot" style={{ background: "#565c64", boxShadow: "none" }} />
+            <span className="inspector__host-name">—</span>
+          </div>
+          <div className="inspector__host-addr">sem sessão ativa</div>
+        </div>
+      </div>
+    );
+  }
+
+  const color = statusColor(session.status);
+  const meta: { k: string; v: string }[] = [
+    { k: "Host", v: host.host },
+    { k: "User", v: host.user ?? "config" },
+    { k: "Port", v: host.port ? String(host.port) : "config" },
+    { k: "Latency", v: "—" },
+    { k: "Uptime", v: uptime(session.connectedAt) },
+    { k: "Auto-reconnect", v: host.autoReconnect ? "on" : "off" },
+    { k: "Auto-attach", v: host.autoAttach ? "on" : "off" },
+  ];
+
   return (
     <div className="inspector">
       <div className="inspector__header">
         <div className="inspector__host">
-          <span className="inspector__host-dot" />
-          <span className="inspector__host-name">atlas-api</span>
+          <span
+            className="inspector__host-dot"
+            style={{ background: color, boxShadow: session.status === "connected" ? `0 0 8px ${color}` : "none" }}
+          />
+          <span className="inspector__host-name">{host.name}</span>
         </div>
-        <div className="inspector__host-addr">deploy@10.4.2.18</div>
+        <div className="inspector__host-addr">
+          {host.user ? `${host.user}@${host.host}` : host.host}
+        </div>
       </div>
 
       <div className="inspector__scroll">
         <div className="inspector__section">Connection</div>
-        {META.map((m) => (
+        {meta.map((m) => (
           <div className="meta-row" key={m.k}>
             <span className="meta-row__k">{m.k}</span>
             <span className="meta-row__v">{m.v}</span>
@@ -26,18 +84,32 @@ export function Inspector() {
             <div className="clmux-card__icon">cl</div>
             <div className="card-body">
               <div className="clmux-card__title">clmux → claude</div>
-              <div className="clmux-card__sub">cd atlas-api · tmux · claude</div>
-            </div>
-          </div>
-          {ACTIONS.map((a) => (
-            <div className="action-card" key={a.title}>
-              <div className="action-card__icon">{a.icon}</div>
-              <div className="card-body">
-                <div className="action-card__title">{a.title}</div>
-                <div className="action-card__sub">{a.sub}</div>
+              <div className="clmux-card__sub">
+                cd {host.projectDir ?? "~"} · tmux · claude
               </div>
             </div>
-          ))}
+          </div>
+          <div className="action-card">
+            <div className="action-card__icon">⏏</div>
+            <div className="card-body">
+              <div className="action-card__title">Detach session</div>
+              <div className="action-card__sub">keeps running on server</div>
+            </div>
+          </div>
+          <div className="action-card">
+            <div className="action-card__icon">⟳</div>
+            <div className="card-body">
+              <div className="action-card__title">Install / attach tmux</div>
+              <div className="action-card__sub">ssh -tt · auto</div>
+            </div>
+          </div>
+          <div className="action-card">
+            <div className="action-card__icon">⌘</div>
+            <div className="card-body">
+              <div className="action-card__title">Open project shell</div>
+              <div className="action-card__sub">cd {host.projectDir ?? "~"}</div>
+            </div>
+          </div>
         </div>
 
         <div className="inspector__section inspector__section--gap">Credential</div>
@@ -47,8 +119,8 @@ export function Inspector() {
             <path d="M8 10V7a4 4 0 0 1 8 0v3" />
           </svg>
           <div className="card-body">
-            <div className="cred-card__title">id_ed25519 · atlas</div>
-            <div className="cred-card__sub">key + passphrase</div>
+            <div className="cred-card__title">{host.credentialRef ?? "ssh-agent / config"}</div>
+            <div className="cred-card__sub">via OpenSSH do sistema</div>
           </div>
           <span className="cred-card__mask">••••</span>
         </div>

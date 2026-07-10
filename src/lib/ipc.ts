@@ -1,9 +1,19 @@
 // Wrappers tipados dos commands/eventos Tauri (contratos do PLANO.md §1).
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { Host, SessionStatus } from "../types";
 
 export function openLocalSession(id: string, cols: number, rows: number): Promise<void> {
   return invoke("open_local_session", { id, cols, rows });
+}
+
+export function openSshSession(
+  id: string,
+  hostId: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  return invoke("open_ssh_session", { id, hostId, cols, rows });
 }
 
 export function writeStdin(id: string, data: string): Promise<void> {
@@ -18,6 +28,18 @@ export function closeSession(id: string): Promise<void> {
   return invoke("close_session", { id });
 }
 
+export function listHosts(): Promise<Host[]> {
+  return invoke("list_hosts");
+}
+
+export function saveHost(host: Host): Promise<void> {
+  return invoke("save_host", { host });
+}
+
+export function deleteHost(id: string): Promise<void> {
+  return invoke("delete_host", { id });
+}
+
 export interface SessionOutput {
   id: string;
   /** chunk de bytes do PTY em base64 */
@@ -30,6 +52,14 @@ export function onSessionOutput(handler: (payload: SessionOutput) => void): Prom
 
 export function onSessionExit(handler: (id: string) => void): Promise<UnlistenFn> {
   return listen<{ id: string }>("session-exit", (event) => handler(event.payload.id));
+}
+
+export function onSessionStatus(
+  handler: (payload: { id: string; status: SessionStatus }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ id: string; status: SessionStatus }>("session-status", (event) =>
+    handler(event.payload),
+  );
 }
 
 export function base64ToBytes(b64: string): Uint8Array {

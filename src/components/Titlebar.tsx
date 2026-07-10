@@ -1,6 +1,11 @@
+import { useSessionsStore } from "../stores/sessions";
+
 const IS_MAC = navigator.userAgent.includes("Mac");
 
 export function Titlebar() {
+  const connected = useSessionsStore(
+    (s) => s.sessions.filter((x) => x.status === "connected").length,
+  );
   return (
     <div className="titlebar" data-tauri-drag-region>
       {IS_MAC ? (
@@ -27,9 +32,11 @@ export function Titlebar() {
         </div>
       </div>
       <div className="titlebar__right">
-        <div className="titlebar__connected">
+        <div className="titlebar__connected" style={connected === 0 ? { opacity: 0.45 } : undefined}>
           <span className="titlebar__connected-dot" />
-          <span className="titlebar__connected-label">6 connected</span>
+          <span className="titlebar__connected-label">
+            {connected} connected
+          </span>
         </div>
         <div className="titlebar__settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a2a8b0" strokeWidth="1.8">
