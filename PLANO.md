@@ -69,7 +69,7 @@ Uma fase por PR/commit-série; cada fase termina com o critério de aceite verif
 - Design tokens em CSS custom properties (fundo `#0b0d10`, painéis `#0e1014`, acento `#e0a15e`, status `#63d29b/#e0b15e/#f0785a/#565c64/#5aa9e0`, radii, sombras — seção "Design Tokens" do README do handoff).
 - Layout da janela 1440×920: titlebar custom 44px (decorations off, drag region, traffic lights), sidebar 296px, área central, inspetor 264px, status bar 30px. Conteúdo estático placeholder fiel ao `Helm - Terminal Manager.dc.html`.
 - `tauri.conf.json`: alvos `dmg` + `deb`; ícones gerados de `assets/helm-logo.svg` (`tauri icon`), squircle conforme `Helm - Logo.dc.html`.
-- **Aceite:** `tauri dev` abre a janela pixel-perfect vs. screenshot do modo terminal.
+- **Aceite:** `tauri dev` abre a janela pixel-perfect vs. screenshot do modo terminal; `tauri build` local gera um `.dmg` instalável.
 
 ### Fase 1 — Terminal local (PTY sem SSH)
 - Rust: `PtySession` com `portable-pty` (shell local), task tokio de leitura → `session-output`; commands `write_stdin`/`resize_pty`.
@@ -131,9 +131,16 @@ Uma fase por PR/commit-série; cada fase termina com o critério de aceite verif
 - Painel VPNs: perfis, status, nº de hosts que usam, Conectar/Desconectar, toggle auto-conectar.
 - **Aceite:** host com VPN conecta na ordem VPN→SSH→tmux; detach do último host derruba a VPN.
 
-### Fase 11 — CI/CD
+### Fase 11 — Empacotamento e CI/CD
+
+**Empacotamento local** (disponível desde a Fase 0, para validar cedo problemas de bundling):
+- **.dmg:** `npm run tauri build` direto no macOS → `src-tauri/target/release/bundle/dmg/`. Sem assinatura funciona localmente (Gatekeeper: clique-direito → Abrir); notarização é passo opcional de release.
+- **.deb amd64 (caminho principal):** `scripts/build-deb-remote.sh` — compila via `ssh prompt` (Ubuntu 22.04.5 x86_64, glibc 2.35 = idêntico ao CI; Node 22, 8 cores/31 GB). O script sincroniza fontes por rsync, instala rustup se faltar, valida dependências de sistema (instrui o `apt install` na primeira vez) e traz o `.deb` de volta para `./dist/`.
+- **.deb via Docker (fallback):** `scripts/build-deb.sh` — container Ubuntu 22.04 com `--platform linux/amd64` (emulação no Apple Silicon: funciona, mas lento; `HELM_DEB_PLATFORM=linux/arm64` para build nativo arm64). Caches de cargo/node/target em volumes nomeados.
+
+**CI:**
 - GitHub Actions com `tauri-action`: matriz `macos-latest` + `ubuntu-22.04` (glibc antiga = .deb mais compatível; se o runner for aposentado, migrar para container ou 24.04), artefatos `.dmg` e `.deb` por tag; job de lint (`cargo clippy`, `tsc --noEmit`, eslint) em todo push.
-- **Aceite:** tag `v0.1.0` produz .dmg e .deb instaláveis.
+- **Aceite:** tag `v0.1.0` produz .dmg e .deb instaláveis (e os mesmos artefatos saem dos scripts locais).
 
 ---
 
