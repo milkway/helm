@@ -50,16 +50,25 @@ export function onSessionOutput(handler: (payload: SessionOutput) => void): Prom
   return listen<SessionOutput>("session-output", (event) => handler(event.payload));
 }
 
-export function onSessionExit(handler: (id: string) => void): Promise<UnlistenFn> {
-  return listen<{ id: string }>("session-exit", (event) => handler(event.payload.id));
+export interface SessionStatusPayload {
+  id: string;
+  status: SessionStatus;
+  attempt?: number;
+  delaySecs?: number;
 }
 
 export function onSessionStatus(
-  handler: (payload: { id: string; status: SessionStatus }) => void,
+  handler: (payload: SessionStatusPayload) => void,
 ): Promise<UnlistenFn> {
-  return listen<{ id: string; status: SessionStatus }>("session-status", (event) =>
-    handler(event.payload),
-  );
+  return listen<SessionStatusPayload>("session-status", (event) => handler(event.payload));
+}
+
+export function detachSession(id: string): Promise<void> {
+  return invoke("detach_session", { id });
+}
+
+export function retrySession(id: string): Promise<void> {
+  return invoke("retry_session", { id });
 }
 
 export function base64ToBytes(b64: string): Uint8Array {

@@ -1,6 +1,102 @@
+import { retrySession } from "../lib/ipc";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
+import { hostAddr, type Host, type SessionInfo } from "../types";
 import { Term } from "./Term";
+
+function ConnectingOverlay({ host, reconnect, attempt }: { host?: Host; reconnect: boolean; attempt: number | null }) {
+  return (
+    <div className="connect-overlay">
+      <span className="connect-overlay__spinner" />
+      <div>
+        <div className="connect-overlay__title">
+          {reconnect
+            ? `Reconectando — tentativa ${attempt ?? 1}/5`
+            : `Conectando a ${host?.name ?? "host"}…`}
+        </div>
+        <div className="connect-overlay__sub">
+          ssh {host ? (host.user ? `${host.user}@${host.host}` : host.host) : ""}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Tela de erro pós-falha — design 3d. */
+function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) {
+  const reattach = useSessionsStore((s) => s.reattach);
+
+  const retryNow = () => {
+    if (session.ptyId) {
+      // sessão ainda viva no Rust aguardando o ciclo de 60s
+      void retrySession(session.ptyId).catch(() => reattach(session.id));
+    } else {
+      reattach(session.id);
+    }
+  };
+
+  return (
+    <div className="error-overlay">
+      <div className="error-card">
+        <div className="error-card__head">
+          <div className="error-card__badge">!</div>
+          <div className="error-card__titles">
+            <div className="error-card__title">
+              Reconexão falhou — {host?.name ?? session.hostId}
+            </div>
+            <div className="error-card__sub">
+              5 tentativas · {host ? hostAddr(host) : ""}
+            </div>
+          </div>
+        </div>
+        <div className="error-card__log">
+          {session.log.slice(-6).map((line, i, arr) => (
+            <div key={i} className={i === arr.length - 1 ? "error-card__log-last" : undefined}>
+              {line}
+            </div>
+          ))}
+        </div>
+        <div className="error-card__note">
+          Sua sessão tmux continua rodando no servidor. Ao reconectar, o Helm re-atacha
+          automaticamente.
+        </div>
+        <div className="error-card__actions">
+          <div className="error-card__btn error-card__btn--primary" onClick={retryNow}>
+            Tentar agora
+          </div>
+          <div className="error-card__btn error-card__btn--secondary">Editar host</div>
+          <div className="error-card__btn error-card__btn--ghost">Ver log completo</div>
+          <div className="error-card__spacer" />
+          <div className="error-card__auto">retry auto: 60s</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetachedOverlay({ session, host }: { session: SessionInfo; host?: Host }) {
+  const reattach = useSessionsStore((s) => s.reattach);
+  return (
+    <div className="error-overlay">
+      <div className="error-card error-card--detached">
+        <div className="error-card__head">
+          <div className="error-card__badge error-card__badge--amber">⏏</div>
+          <div className="error-card__titles">
+            <div className="error-card__title error-card__title--amber">
+              Sessão detachada — {host?.name ?? session.hostId}
+            </div>
+            <div className="error-card__sub">tmux segue rodando no servidor</div>
+          </div>
+        </div>
+        <div className="error-card__actions">
+          <div className="error-card__btn error-card__btn--primary" onClick={() => reattach(session.id)}>
+            Re-atachar
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Uma pane por sessão aberta, todas montadas (o xterm mantém buffer e estado);
 // as inativas ficam com visibility:hidden para preservar as dimensões.
@@ -26,20 +122,21 @@ export function TerminalView() {
             key={session.id}
             className={`term term-pane${session.id === activeId ? "" : " term-pane--hidden"}`}
           >
-            <Term uiId={session.id} hostId={session.hostId} active={session.id === activeId} />
-            {session.status === "connecting" && (
-              <div className="connect-overlay">
-                <span className="connect-overlay__spinner" />
-                <div>
-                  <div className="connect-overlay__title">
-                    Conectando a {host?.name ?? session.hostId}…
-                  </div>
-                  <div className="connect-overlay__sub">
-                    ssh {host ? (host.user ? `${host.user}@${host.host}` : host.host) : ""}
-                  </div>
-                </div>
-              </div>
+            <Term
+              key={`${session.id}:${session.generation}`}
+              uiId={session.id}
+              hostId={session.hostId}
+              active={session.id === activeId}
+            />
+            {(session.status === "connecting" || session.status === "reconnecting") && (
+              <ConnectingOverlay
+                host={host}
+                reconnect={session.status === "reconnecting"}
+                attempt={session.attempt}
+              />
             )}
+            {session.status === "error" && <ErrorOverlay session={session} host={host} />}
+            {session.status === "detached" && <DetachedOverlay session={session} host={host} />}
           </div>
         );
       })}

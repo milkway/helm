@@ -13,6 +13,8 @@ import {
   writeStdin,
 } from "../lib/ipc";
 import { useSessionsStore } from "../stores/sessions";
+import { useHostsStore } from "../stores/hosts";
+import { tmuxSessionName, type SessionStatus } from "../types";
 
 // Tema do terminal (tokens do handoff). Fundo transparente: o gradiente
 // radial fica no container (.term), como no protótipo.
@@ -108,8 +110,23 @@ export function Term({ uiId, hostId, active }: TermProps) {
       });
       disposers.push(offOutput);
 
+      let lastStatus: SessionStatus | null = null;
       const offStatus = await onSessionStatus((payload) => {
-        if (payload.id === ptyId) setStatus(uiId, payload.status);
+        if (payload.id !== ptyId) return;
+        const prev = lastStatus;
+        lastStatus = payload.status;
+        setStatus(uiId, payload.status, payload.attempt ?? null, payload.delaySecs ?? null);
+
+        if (payload.status === "connected" && (prev === "reconnecting" || prev === "error")) {
+          const host = useHostsStore.getState().hosts.find((h) => h.id === hostId);
+          const msg = host?.autoAttach
+            ? `reconnected · auto-attached tmux session "${tmuxSessionName(host.name)}"`
+            : "reconnected";
+          term.write(`\r\n\x1b[38;2;99;210;155m${msg}\x1b[0m\r\n`);
+        }
+        if (payload.status === "exited") {
+          term.write("\r\n\x1b[38;2;86;92;100m[sessão encerrada]\x1b[0m\r\n");
+        }
       });
       disposers.push(offStatus);
 
@@ -117,6 +134,7 @@ export function Term({ uiId, hostId, active }: TermProps) {
       await openSshSession(ptyId, hostId, term.cols, term.rows);
       disposers.push(() => void closeSession(ptyId));
       if (disposed) return;
+      useSessionsStore.getState().setPtyId(uiId, ptyId);
 
       let opened = true;
       // o pane pode ter mudado de tamanho durante o connect — garante que a

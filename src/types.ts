@@ -15,15 +15,29 @@ export interface Host {
   startupMode: "shell" | "tmux" | "clmux";
 }
 
-/** Estados da máquina de sessão (Fase 2; a Fase 3 adiciona reconexão). */
-export type SessionStatus = "connecting" | "connected" | "exited";
+/** Estados da máquina de sessão (manager.rs). */
+export type SessionStatus =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "error"
+  | "detached"
+  | "exited";
 
 export interface SessionInfo {
   /** id estável da sessão na UI (aba) — o PTY tem id próprio por montagem */
   id: string;
   hostId: string;
   status: SessionStatus;
+  /** tentativa de reconexão corrente (1–5) */
+  attempt: number | null;
   connectedAt: number | null;
+  /** id da sessão no Rust (registrado pelo Term ao montar) */
+  ptyId: string | null;
+  /** incrementa para forçar remontagem do Term (re-attach pós-detach) */
+  generation: number;
+  /** log de eventos para a tela de erro (design 3d) */
+  log: string[];
 }
 
 export const STATUS_COLORS = {
@@ -39,10 +53,19 @@ export function statusColor(status: SessionStatus | undefined): string {
     case "connected":
       return STATUS_COLORS.connected;
     case "connecting":
+    case "reconnecting":
       return STATUS_COLORS.reconnect;
+    case "error":
+      return STATUS_COLORS.attention;
     default:
       return STATUS_COLORS.idle;
   }
+}
+
+/** Nome da sessão tmux derivado do nome do host (espelha manager.rs). */
+export function tmuxSessionName(name: string): string {
+  const s = name.replace(/[^A-Za-z0-9_-]/g, "-").replace(/^-+|-+$/g, "");
+  return s || "helm";
 }
 
 export function hostAddr(host: Host): string {

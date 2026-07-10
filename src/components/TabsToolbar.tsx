@@ -1,6 +1,7 @@
+import { detachSession } from "../lib/ipc";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
-import { statusColor } from "../types";
+import { statusColor, tmuxSessionName } from "../types";
 
 export function TabsToolbar() {
   const sessions = useSessionsStore((s) => s.sessions);
@@ -12,6 +13,13 @@ export function TabsToolbar() {
 
   const hostName = (hostId: string) => hosts.find((h) => h.id === hostId)?.name ?? hostId;
   const activeSession = sessions.find((s) => s.id === activeId);
+  const activeHost = activeSession ? hosts.find((h) => h.id === activeSession.hostId) : undefined;
+  const tmuxActive =
+    activeSession?.status === "connected" && activeHost?.autoAttach ? activeHost : undefined;
+
+  const detach = () => {
+    if (tmuxActive && activeSession?.ptyId) void detachSession(activeSession.ptyId);
+  };
 
   return (
     <div className="tabsbar">
@@ -44,14 +52,21 @@ export function TabsToolbar() {
       )}
       <div className="tabsbar__spacer" />
       <div className="tabsbar__right">
-        <div className="tmux-badge">
+        <div className="tmux-badge" style={tmuxActive ? undefined : { opacity: 0.45 }}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#63d29b" strokeWidth="2">
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <path d="M3 9h18M9 21V9" />
           </svg>
-          <span className="tmux-badge__label">tmux: —</span>
+          <span className="tmux-badge__label">
+            tmux: {tmuxActive ? tmuxSessionName(tmuxActive.name) : "—"}
+          </span>
         </div>
-        <div className="detach-btn" title="Detach — keeps running on server">
+        <div
+          className="detach-btn"
+          title="Detach — keeps running on server"
+          style={tmuxActive ? undefined : { opacity: 0.45, cursor: "default" }}
+          onClick={detach}
+        >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="2">
             <path d="M12 4l-6 6h4v6h4v-6h4z" fill="#e0a15e" stroke="none" />
             <path d="M5 20h14" />
