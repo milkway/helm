@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter+Tight:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing:border-box; }
+    body { background:#08090b; }
+    a { color:#e0a15e; } a:hover { color:#f0c99a; }
+    @keyframes helm-spin { to { transform:rotate(360deg); } }
+  </style>
+</helmet>
+<section style="padding:48px 48px 0; display:flex; gap:56px; align-items:flex-start; flex-wrap:wrap; font-family:'Inter Tight',system-ui,sans-serif;">
+
+  <!-- 4a · VPN sequence -->
+  <div id="4a" style="flex:none;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+      <a href="#4a" style="text-decoration:none; font-size:12px; font-weight:700; font-family:'JetBrains Mono'; color:#e0a15e; background:rgba(224,161,94,.14); border:1px solid rgba(224,161,94,.3); border-radius:6px; padding:3px 9px;">4a</a>
+      <span style="font-size:14px; font-weight:600; color:#c9cdd2;">VPN — conexão automática antes do SSH</span>
+    </div>
+    <div style="width:1440px; height:920px; position:relative; border-radius:12px; overflow:hidden;">
+      <dc-import name="Helm - Terminal Manager" hint-size="1440px,920px" style="position:absolute; inset:0;"></dc-import>
+      <div style="position:absolute; left:296px; right:264px; bottom:30px; top:84px; background:rgba(8,9,11,.72); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center;">
+        <div style="width:460px; background:#111318; border:1px solid rgba(255,255,255,.1); border-radius:14px; box-shadow:0 30px 80px rgba(0,0,0,.6); padding:22px; color:#e6e8ea; font-family:'Inter Tight';">
+          <div style="display:flex; align-items:center; gap:11px;">
+            <div style="width:34px; height:34px; border-radius:9px; background:rgba(94,169,224,.14); display:flex; align-items:center; justify-content:center;">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5aa9e0" stroke-width="1.8"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:15px; font-weight:600;">Conectando a <span style="font-family:'JetBrains Mono'; color:#9cc8e8;">lab-gpu</span></div>
+              <div style="font-size:12px; color:#7d848d;">este host requer VPN · perfil "office"</div>
+            </div>
+          </div>
+          <div style="margin-top:16px; display:flex; flex-direction:column; gap:11px;">
+            <div style="display:flex; align-items:center; gap:11px;">
+              <span style="width:22px; height:22px; border-radius:50%; background:rgba(99,210,155,.14); display:flex; align-items:center; justify-content:center; color:#63d29b; font-size:12px; flex:none;">✓</span>
+              <div style="flex:1; font-size:13px; color:#c9cdd2;">Tunnelblick · perfil <b>office</b> conectado</div>
+              <span style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">1.8s</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:11px;">
+              <span style="width:22px; height:22px; border-radius:50%; border:2px solid rgba(224,161,94,.5); border-top-color:#e0a15e; animation:helm-spin 1s linear infinite; flex:none;"></span>
+              <div style="flex:1; font-size:13px; color:#c9cdd2;">ssh -tt ml@10.8.0.5 · handshake…</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:11px; opacity:.45;">
+              <span style="width:22px; height:22px; border-radius:50%; border:1.5px solid #565c64; flex:none;"></span>
+              <div style="flex:1; font-size:13px; color:#7d848d;">tmux attach — sessão "lab-gpu"</div>
+            </div>
+          </div>
+          <div style="margin-top:16px; padding:9px 12px; background:rgba(94,169,224,.07); border:1px solid rgba(94,169,224,.18); border-radius:8px; font-size:11.5px; color:#7fa4c2; line-height:1.5;">
+            A VPN desconecta sozinha quando o último host que a usa for detachado <span style="color:#565c64;">(configurável)</span>.
+          </div>
+        </div>
+      </div>
+      <div style="position:absolute; right:20px; top:96px; width:330px; background:#111318; border:1px solid rgba(255,255,255,.1); border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.5); padding:15px; color:#e6e8ea; font-family:'Inter Tight';">
+        <div style="display:flex; align-items:center; gap:9px; margin-bottom:11px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5aa9e0" stroke-width="1.8"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg>
+          <span style="font-size:13px; font-weight:600;">VPNs</span>
+          <span style="font-size:10.5px; color:#565c64; font-family:'JetBrains Mono';">via Tunnelblick · nmcli</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <div style="display:flex; align-items:center; gap:10px; padding:9px 11px; background:rgba(94,169,224,.08); border:1px solid rgba(94,169,224,.24); border-radius:8px;">
+            <span style="width:8px; height:8px; border-radius:50%; background:#5aa9e0; box-shadow:0 0 7px #5aa9e0; flex:none;"></span>
+            <div style="flex:1;">
+              <div style="font-size:12.5px; font-weight:600;">office</div>
+              <div style="font-size:10.5px; color:#565c64; font-family:'JetBrains Mono';">conectada · 2 hosts usam</div>
+            </div>
+            <span style="font-size:11px; color:#7d848d; cursor:pointer;">Desconectar</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; padding:9px 11px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:8px;">
+            <span style="width:8px; height:8px; border-radius:50%; background:#565c64; flex:none;"></span>
+            <div style="flex:1;">
+              <div style="font-size:12.5px; font-weight:500; color:#c9cdd2;">lab-berlin</div>
+              <div style="font-size:10.5px; color:#565c64; font-family:'JetBrains Mono';">desconectada · 1 host usa</div>
+            </div>
+            <span style="font-size:11px; color:#7d848d; cursor:pointer;">Conectar</span>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:9px; margin-top:11px; padding-top:11px; border-top:1px solid rgba(255,255,255,.07);">
+          <div style="width:30px; height:18px; border-radius:9px; background:#e0a15e; position:relative; flex:none;"><span style="position:absolute; top:2px; right:2px; width:14px; height:14px; border-radius:50%; background:#1a0f08;"></span></div>
+          <span style="font-size:11.5px; color:#a2a8b0;">Auto-conectar quando o host precisar</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3a · Empty state -->
+  <div id="3a" style="flex:none;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+      <a href="#3a" style="text-decoration:none; font-size:12px; font-weight:700; font-family:'JetBrains Mono'; color:#e0a15e; background:rgba(224,161,94,.14); border:1px solid rgba(224,161,94,.3); border-radius:6px; padding:3px 9px;">3a</a>
+      <span style="font-size:14px; font-weight:600; color:#c9cdd2;">Primeira execução — sem hosts</span>
+    </div>
+    <div style="width:1440px; height:920px; background:#0b0d10; color:#e6e8ea; display:flex; flex-direction:column; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,.07);">
+      <div style="height:44px; flex:none; display:flex; align-items:center; gap:14px; padding:0 16px; background:linear-gradient(#131519,#101216); border-bottom:1px solid rgba(255,255,255,.06);">
+        <div style="display:flex; gap:8px;">
+          <div style="width:12px; height:12px; border-radius:50%; background:#f0785a;"></div>
+          <div style="width:12px; height:12px; border-radius:50%; background:#e0b15e;"></div>
+          <div style="width:12px; height:12px; border-radius:50%; background:#63d29b;"></div>
+        </div>
+        <div style="display:flex; align-items:center; gap:9px; margin-left:6px;">
+          <img src="assets/helm-logo.svg" style="width:18px; height:18px;" alt="">
+          <span style="font-size:13px; font-weight:600;">Helm</span>
+        </div>
+        <div style="flex:1;"></div>
+      </div>
+      <div style="flex:1; display:flex; min-height:0;">
+        <div style="width:296px; flex:none; background:#0e1014; border-right:1px solid rgba(255,255,255,.06); display:flex; flex-direction:column;">
+          <div style="padding:14px 14px 10px; font-size:11px; font-weight:600; letter-spacing:1.4px; color:#565c64; text-transform:uppercase;">Hosts &amp; Sessions</div>
+          <div style="flex:1;"></div>
+          <div style="flex:none; padding:11px 14px; border-top:1px solid rgba(255,255,255,.06); display:flex; align-items:center; gap:10px; background:#0c0e12;">
+            <div style="width:30px; height:30px; border-radius:8px; background:rgba(255,255,255,.05); display:flex; align-items:center; justify-content:center;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7d848d" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:12px; font-weight:600; color:#a2a8b0;">Vault bloqueado</div>
+              <div style="font-size:10.5px; color:#565c64;">Touch&nbsp;ID para destravar</div>
+            </div>
+            <div style="width:8px; height:8px; border-radius:50%; background:#565c64;"></div>
+          </div>
+        </div>
+        <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0; background:radial-gradient(120% 90% at 50% 0%, #0e1114 0%, #0a0c0f 100%);">
+          <img src="assets/helm-logo.svg" style="width:88px; height:88px; opacity:.9;" alt="">
+          <div style="font-size:24px; font-weight:600; margin-top:28px;">Nenhum host ainda</div>
+          <div style="font-size:14px; color:#7d848d; margin-top:8px;">Adicione um servidor ou importe do seu <span style="font-family:'JetBrains Mono'; color:#a2a8b0;">~/.ssh/config</span></div>
+          <div style="display:flex; gap:10px; margin-top:28px;">
+            <div style="height:40px; display:flex; align-items:center; gap:8px; padding:0 20px; background:#e0a15e; border-radius:9px; font-size:14px; font-weight:600; color:#1a0f08; cursor:pointer;">+ Add host</div>
+            <div style="height:40px; display:flex; align-items:center; padding:0 18px; border:1px solid rgba(255,255,255,.12); border-radius:9px; font-size:14px; font-weight:500; color:#c9cdd2; cursor:pointer;">Importar de ~/.ssh/config</div>
+          </div>
+          <div style="margin-top:36px; display:flex; align-items:center; gap:7px; font-size:12.5px; color:#565c64;">
+            <span style="font-family:'JetBrains Mono'; font-size:11px; background:rgba(255,255,255,.06); border-radius:4px; padding:2px 6px;">⌘K</span> busca hosts, sessões e comandos
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3b · Command palette -->
+  <div id="3b" style="flex:none;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+      <a href="#3b" style="text-decoration:none; font-size:12px; font-weight:700; font-family:'JetBrains Mono'; color:#e0a15e; background:rgba(224,161,94,.14); border:1px solid rgba(224,161,94,.3); border-radius:6px; padding:3px 9px;">3b</a>
+      <span style="font-size:14px; font-weight:600; color:#c9cdd2;">⌘K — Command palette</span>
+    </div>
+    <div style="width:1440px; height:920px; position:relative; border-radius:12px; overflow:hidden;">
+      <dc-import name="Helm - Terminal Manager" hint-size="1440px,920px" style="position:absolute; inset:0;"></dc-import>
+      <div style="position:absolute; inset:0; background:rgba(4,5,7,.55); backdrop-filter:blur(2px);"></div>
+      <div style="position:absolute; top:150px; left:50%; transform:translateX(-50%); width:580px; background:#111318; border:1px solid rgba(255,255,255,.12); border-radius:14px; box-shadow:0 40px 120px rgba(0,0,0,.7); color:#e6e8ea; overflow:hidden;">
+        <div style="display:flex; align-items:center; gap:11px; padding:15px 18px; border-bottom:1px solid rgba(255,255,255,.07);">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7d848d" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+          <span style="font-size:15px; font-family:'JetBrains Mono';">atl<span style="display:inline-block; width:1.5px; height:18px; background:#e0a15e; vertical-align:-3px; margin-left:1px;"></span></span>
+          <div style="flex:1;"></div>
+          <span style="font-size:10.5px; font-family:'JetBrains Mono'; color:#565c64; border:1px solid rgba(255,255,255,.1); border-radius:4px; padding:1px 6px;">esc</span>
+        </div>
+        <div style="padding:8px;">
+          <div style="font-size:10.5px; font-weight:600; letter-spacing:1.2px; text-transform:uppercase; color:#565c64; padding:6px 10px;">Sessões</div>
+          <div style="display:flex; align-items:center; gap:11px; padding:9px 10px; background:rgba(224,161,94,.1); border:1px solid rgba(224,161,94,.24); border-radius:8px;">
+            <span style="width:8px; height:8px; border-radius:50%; background:#63d29b; box-shadow:0 0 7px #63d29b;"></span>
+            <span style="font-size:13.5px; font-weight:600;">atlas-api</span>
+            <span style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">deploy@10.4.2.18 · tmux</span>
+            <div style="flex:1;"></div>
+            <span style="font-size:10.5px; font-family:'JetBrains Mono'; color:#7d848d;">↵ abrir</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:11px; padding:9px 10px; border-radius:8px;">
+            <span style="width:8px; height:8px; border-radius:50%; background:#e0b15e;"></span>
+            <span style="font-size:13.5px; font-weight:500; color:#c9cdd2;">atlas-api · stg</span>
+            <span style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">reconectando 2/5…</span>
+          </div>
+          <div style="font-size:10.5px; font-weight:600; letter-spacing:1.2px; text-transform:uppercase; color:#565c64; padding:10px 10px 6px;">Comandos</div>
+          <div style="display:flex; align-items:center; gap:11px; padding:9px 10px; border-radius:8px;">
+            <span style="width:24px; height:24px; border-radius:6px; background:rgba(224,161,94,.14); display:flex; align-items:center; justify-content:center; font-family:'JetBrains Mono'; font-size:11px; font-weight:700; color:#e0a15e;">cl</span>
+            <span style="font-size:13.5px; color:#c9cdd2;">clmux — abrir Claude em <b style="color:#f0c99a;">atlas-api</b></span>
+            <div style="flex:1;"></div>
+            <span style="font-size:10.5px; font-family:'JetBrains Mono'; color:#7d848d;">⌘⏎</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:11px; padding:9px 10px; border-radius:8px;">
+            <span style="width:24px; height:24px; border-radius:6px; background:rgba(255,255,255,.05); display:flex; align-items:center; justify-content:center; color:#a2a8b0; font-size:12px;">⏏</span>
+            <span style="font-size:13.5px; color:#c9cdd2;">Detach da sessão atual</span>
+            <div style="flex:1;"></div>
+            <span style="font-size:10.5px; font-family:'JetBrains Mono'; color:#7d848d;">⌘D</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:11px; padding:9px 10px; border-radius:8px;">
+            <span style="width:24px; height:24px; border-radius:6px; background:rgba(255,255,255,.05); display:flex; align-items:center; justify-content:center; color:#a2a8b0; font-size:12px;">⟳</span>
+            <span style="font-size:13.5px; color:#c9cdd2;">Instalar tmux em <b style="color:#c9cdd2;">atlas-api · stg</b></span>
+            <div style="flex:1;"></div>
+            <span style="font-size:10.5px; font-family:'JetBrains Mono'; color:#7d848d;">ssh -tt</span>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:14px; padding:10px 18px; border-top:1px solid rgba(255,255,255,.07); font-size:11px; color:#565c64; font-family:'JetBrains Mono';">
+          <span>↑↓ navegar</span><span>↵ abrir</span><span>⌘⏎ ação padrão</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3c · Vault -->
+  <div id="3c" style="flex:none;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+      <a href="#3c" style="text-decoration:none; font-size:12px; font-weight:700; font-family:'JetBrains Mono'; color:#e0a15e; background:rgba(224,161,94,.14); border:1px solid rgba(224,161,94,.3); border-radius:6px; padding:3px 9px;">3c</a>
+      <span style="font-size:14px; font-weight:600; color:#c9cdd2;">Vault — credenciais</span>
+    </div>
+    <div style="width:1440px; height:920px; position:relative; border-radius:12px; overflow:hidden;">
+      <dc-import name="Helm - Terminal Manager" hint-size="1440px,920px" style="position:absolute; inset:0;"></dc-import>
+      <div style="position:absolute; inset:0; background:rgba(4,5,7,.62); backdrop-filter:blur(3px);"></div>
+      <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:640px; background:#111318; border:1px solid rgba(255,255,255,.1); border-radius:16px; box-shadow:0 40px 120px rgba(0,0,0,.7); color:#e6e8ea;">
+        <div style="display:flex; align-items:center; gap:11px; padding:18px 22px 14px;">
+          <div style="width:32px; height:32px; border-radius:9px; background:rgba(224,161,94,.14); display:flex; align-items:center; justify-content:center;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+          </div>
+          <div style="flex:1;">
+            <div style="font-size:16px; font-weight:600;">Vault</div>
+            <div style="font-size:12px; color:#7d848d;">12 credenciais · destravado com Touch&nbsp;ID · Keychain (macOS) / Secret Service (Linux)</div>
+          </div>
+          <div style="height:30px; display:flex; align-items:center; gap:6px; padding:0 12px; border:1px solid rgba(255,255,255,.1); border-radius:7px; font-size:12px; font-weight:500; color:#a2a8b0; cursor:pointer;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#a2a8b0" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+            Bloquear
+          </div>
+        </div>
+        <div style="padding:0 22px 8px;">
+          <div style="display:flex; align-items:center; gap:8px; height:32px; padding:0 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.07); border-radius:7px; color:#565c64; font-size:12.5px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#565c64" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+            Buscar credenciais…
+          </div>
+        </div>
+        <div style="padding:6px 22px 6px;">
+          <div style="font-size:10.5px; font-weight:600; letter-spacing:1.2px; text-transform:uppercase; color:#565c64; padding:8px 0 7px;">Chaves SSH</div>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:9px;">
+              <span style="font-family:'JetBrains Mono'; font-size:11px; font-weight:700; color:#63d29b; background:rgba(99,210,155,.12); border-radius:5px; padding:3px 6px;">ed25519</span>
+              <div style="flex:1;">
+                <div style="font-size:13px; font-weight:500;">id_ed25519 · atlas</div>
+                <div style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">deploy@10.4.2.18 · usada há 2 min</div>
+              </div>
+              <span style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">passphrase ····</span>
+              <span style="color:#565c64; cursor:pointer;">⋯</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:9px;">
+              <span style="font-family:'JetBrains Mono'; font-size:11px; font-weight:700; color:#63d29b; background:rgba(99,210,155,.12); border-radius:5px; padding:3px 6px;">ed25519</span>
+              <div style="flex:1;">
+                <div style="font-size:13px; font-weight:500;">id_homelab</div>
+                <div style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">kai@192.168.1.40 · usada ontem</div>
+              </div>
+              <span style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">sem passphrase</span>
+              <span style="color:#565c64; cursor:pointer;">⋯</span>
+            </div>
+          </div>
+          <div style="font-size:10.5px; font-weight:600; letter-spacing:1.2px; text-transform:uppercase; color:#565c64; padding:14px 0 7px;">Senhas</div>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:9px;">
+              <span style="font-family:'JetBrains Mono'; font-size:11px; font-weight:700; color:#e0a15e; background:rgba(224,161,94,.14); border-radius:5px; padding:3px 6px;">sudo</span>
+              <div style="flex:1;">
+                <div style="font-size:13px; font-weight:500;">sudo · deploy@atlas</div>
+                <div style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">usada na instalação do tmux · há 1h</div>
+              </div>
+              <span style="font-family:'JetBrains Mono'; font-size:13px; color:#565c64; letter-spacing:2px;">••••••</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#565c64" stroke-width="1.8" style="cursor:pointer;"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+              <span style="color:#565c64; cursor:pointer;">⋯</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:9px;">
+              <span style="font-family:'JetBrains Mono'; font-size:11px; font-weight:700; color:#e0a15e; background:rgba(224,161,94,.14); border-radius:5px; padding:3px 6px;">ssh</span>
+              <div style="flex:1;">
+                <div style="font-size:13px; font-weight:500;">root@stg-db</div>
+                <div style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">senha · usada há 3 dias</div>
+              </div>
+              <span style="font-family:'JetBrains Mono'; font-size:13px; color:#565c64; letter-spacing:2px;">••••••</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#565c64" stroke-width="1.8" style="cursor:pointer;"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+              <span style="color:#565c64; cursor:pointer;">⋯</span>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; padding:14px 22px 20px;">
+          <div style="height:36px; display:flex; align-items:center; gap:7px; padding:0 16px; background:rgba(224,161,94,.14); border:1px solid rgba(224,161,94,.3); border-radius:8px; font-size:13px; font-weight:600; color:#e0a15e; cursor:pointer;">+ Adicionar credencial</div>
+          <div style="flex:1;"></div>
+          <span style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">bloqueio automático: 15 min inativo</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3d · Estados de erro -->
+  <div id="3d" style="flex:none;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+      <a href="#3d" style="text-decoration:none; font-size:12px; font-weight:700; font-family:'JetBrains Mono'; color:#e0a15e; background:rgba(224,161,94,.14); border:1px solid rgba(224,161,94,.3); border-radius:6px; padding:3px 9px;">3d</a>
+      <span style="font-size:14px; font-weight:600; color:#c9cdd2;">Erros — reconexão falhou · autenticação recusada</span>
+    </div>
+    <div style="width:1440px; height:920px; position:relative; border-radius:12px; overflow:hidden;">
+      <dc-import name="Helm - Terminal Manager" hint-size="1440px,920px" style="position:absolute; inset:0;"></dc-import>
+      <div style="position:absolute; left:296px; right:264px; bottom:30px; top:84px; background:rgba(8,9,11,.72); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center;">
+        <div style="width:480px; background:#15110f; border:1px solid rgba(240,120,90,.4); border-radius:14px; box-shadow:0 30px 80px rgba(0,0,0,.6); padding:22px;">
+          <div style="display:flex; align-items:center; gap:11px;">
+            <div style="width:34px; height:34px; border-radius:9px; background:rgba(240,120,90,.16); display:flex; align-items:center; justify-content:center; color:#f0785a; font-size:16px; font-weight:700;">!</div>
+            <div style="flex:1;">
+              <div style="font-size:15px; font-weight:600; color:#f5a88f;">Reconexão falhou — atlas-api · stg</div>
+              <div style="font-size:12px; color:#a97a68;">5 tentativas em 2 min · timeout (deploy@10.6.0.12:22)</div>
+            </div>
+          </div>
+          <div style="margin-top:14px; padding:10px 12px; background:#0a0c0f; border:1px solid rgba(255,255,255,.06); border-radius:8px; font-family:'JetBrains Mono'; font-size:11.5px; line-height:1.7; color:#7d848d;">
+            <div>22:14:02 retry 4/5 · connect timeout (10s)</div>
+            <div>22:14:31 retry 5/5 · connect timeout (10s)</div>
+            <div style="color:#f0785a;">22:14:41 giving up · session preserved on server (tmux)</div>
+          </div>
+          <div style="margin-top:10px; font-size:12px; color:#7d848d;">Sua sessão tmux continua rodando no servidor. Ao reconectar, o Helm re-atacha automaticamente.</div>
+          <div style="display:flex; gap:9px; margin-top:16px;">
+            <div style="height:34px; display:flex; align-items:center; padding:0 16px; background:#e0a15e; border-radius:8px; font-size:12.5px; font-weight:600; color:#1a0f08; cursor:pointer;">Tentar agora</div>
+            <div style="height:34px; display:flex; align-items:center; padding:0 14px; border:1px solid rgba(255,255,255,.12); border-radius:8px; font-size:12.5px; font-weight:500; color:#c9cdd2; cursor:pointer;">Editar host</div>
+            <div style="height:34px; display:flex; align-items:center; padding:0 14px; border-radius:8px; font-size:12.5px; font-weight:500; color:#7d848d; cursor:pointer;">Ver log completo</div>
+            <div style="flex:1;"></div>
+            <div style="height:34px; display:flex; align-items:center; font-size:11.5px; color:#565c64; font-family:'JetBrains Mono';">retry auto: 60s</div>
+          </div>
+        </div>
+      </div>
+      <div style="position:absolute; right:20px; top:96px; width:340px; background:rgba(20,16,14,.95); backdrop-filter:blur(8px); border:1px solid rgba(240,120,90,.35); border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.5); padding:13px 15px;">
+        <div style="display:flex; align-items:center; gap:9px;">
+          <span style="width:8px; height:8px; border-radius:50%; background:#f0785a; flex:none;"></span>
+          <div style="font-size:12.5px; font-weight:600; color:#f5a88f;">Autenticação recusada — root@stg-db</div>
+        </div>
+        <div style="font-size:11.5px; color:#a97a68; margin:6px 0 10px 17px;">Chave <span style="font-family:'JetBrains Mono';">id_ed25519</span> rejeitada pelo servidor</div>
+        <div style="display:flex; gap:7px; margin-left:17px;">
+          <div style="font-size:11.5px; font-weight:600; color:#1a0f08; background:#e0a15e; border-radius:6px; padding:4px 10px; cursor:pointer;">Abrir Vault</div>
+          <div style="font-size:11.5px; font-weight:500; color:#c9cdd2; border:1px solid rgba(255,255,255,.14); border-radius:6px; padding:4px 10px; cursor:pointer;">Usar senha</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3e · Sobre -->
+  <div id="3e" style="flex:none;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+      <a href="#3e" style="text-decoration:none; font-size:12px; font-weight:700; font-family:'JetBrains Mono'; color:#e0a15e; background:rgba(224,161,94,.14); border:1px solid rgba(224,161,94,.3); border-radius:6px; padding:3px 9px;">3e</a>
+      <span style="font-size:14px; font-weight:600; color:#c9cdd2;">Sobre</span>
+    </div>
+    <div style="width:1440px; height:920px; position:relative; border-radius:12px; overflow:hidden;">
+      <dc-import name="Helm - Terminal Manager" hint-size="1440px,920px" style="position:absolute; inset:0;"></dc-import>
+      <div style="position:absolute; inset:0; background:rgba(4,5,7,.62); backdrop-filter:blur(3px);"></div>
+      <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:420px; background:#111318; border:1px solid rgba(255,255,255,.1); border-radius:16px; box-shadow:0 40px 120px rgba(0,0,0,.7); color:#e6e8ea; padding:36px 32px 26px; display:flex; flex-direction:column; align-items:center;">
+        <img src="assets/helm-logo.svg" style="width:76px; height:76px;" alt="Helm">
+        <div style="font-size:26px; font-weight:600; letter-spacing:-.5px; margin-top:18px;">Helm</div>
+        <div style="font-size:13px; color:#7d848d; margin-top:4px;">Gerenciador de terminais SSH</div>
+        <div style="font-size:12px; color:#565c64; font-family:'JetBrains Mono'; margin-top:10px;">1.0.0 · build 2026.07 · aarch64</div>
+        <div style="display:flex; gap:8px; margin-top:14px; font-family:'JetBrains Mono'; font-size:10.5px; color:#7d848d;">
+          <span style="background:rgba(255,255,255,.05); border-radius:4px; padding:3px 8px;">Tauri 2.11</span>
+          <span style="background:rgba(255,255,255,.05); border-radius:4px; padding:3px 8px;">React 19.2</span>
+          <span style="background:rgba(255,255,255,.05); border-radius:4px; padding:3px 8px;">xterm.js 6</span>
+        </div>
+        <div style="display:flex; gap:9px; margin-top:24px;">
+          <div style="height:34px; display:flex; align-items:center; padding:0 16px; background:#e0a15e; border-radius:8px; font-size:12.5px; font-weight:600; color:#1a0f08; cursor:pointer;">Verificar atualizações</div>
+          <div style="height:34px; display:flex; align-items:center; padding:0 14px; border:1px solid rgba(255,255,255,.12); border-radius:8px; font-size:12.5px; font-weight:500; color:#c9cdd2; cursor:pointer;">Licenças open-source</div>
+        </div>
+        <div style="font-size:11px; color:#565c64; margin-top:22px;">© 2026 · MIT License</div>
+      </div>
+    </div>
+  </div>
+</section>
+<section style="padding:48px 48px 0; display:flex; gap:56px; align-items:flex-start; font-family:'Inter Tight',system-ui,sans-serif;">
+
+  <!-- 2a · Install tmux + sudo -->
+  <div id="2a" style="flex:none;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+      <a href="#2a" style="text-decoration:none; font-size:12px; font-weight:700; font-family:'JetBrains Mono'; color:#e0a15e; background:rgba(224,161,94,.14); border:1px solid rgba(224,161,94,.3); border-radius:6px; padding:3px 9px;">2a</a>
+      <span style="font-size:14px; font-weight:600; color:#c9cdd2;">Instalar tmux — autenticação sudo</span>
+    </div>
+    <div style="width:1440px; height:920px; position:relative; border-radius:12px; overflow:hidden;">
+      <dc-import name="Helm - Terminal Manager" hint-size="1440px,920px" style="position:absolute; inset:0;"></dc-import>
+      <div style="position:absolute; inset:0; background:rgba(4,5,7,.62); backdrop-filter:blur(3px);"></div>
+      <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:540px; background:#111318; border:1px solid rgba(255,255,255,.1); border-radius:16px; box-shadow:0 40px 120px rgba(0,0,0,.7); color:#e6e8ea;">
+        <div style="display:flex; align-items:center; gap:11px; padding:18px 22px 14px;">
+          <div style="width:32px; height:32px; border-radius:9px; background:rgba(99,210,155,.12); display:flex; align-items:center; justify-content:center;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#63d29b" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+          </div>
+          <div style="flex:1;">
+            <div style="font-size:16px; font-weight:600;">Instalar tmux em <span style="font-family:'JetBrains Mono'; color:#f0c99a;">staging-api</span></div>
+            <div style="font-size:12px; color:#7d848d;">tmux não encontrado neste host</div>
+          </div>
+          <span style="font-size:18px; color:#565c64; cursor:pointer;">×</span>
+        </div>
+
+        <div style="padding:4px 22px 6px; display:flex; flex-direction:column; gap:13px;">
+          <div style="display:flex; align-items:center; gap:9px; padding:9px 12px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:8px; font-size:12.5px; color:#a2a8b0;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7d848d" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 2.5"/></svg>
+            Detectado: <span style="font-family:'JetBrains Mono'; color:#c9cdd2;">Ubuntu 22.04 · apt</span>
+            <div style="flex:1;"></div>
+            <span style="font-size:10px; font-weight:600; font-family:'JetBrains Mono'; color:#63d29b; background:rgba(99,210,155,.12); border-radius:4px; padding:2px 6px;">ssh -tt</span>
+          </div>
+
+          <div>
+            <div style="font-size:10.5px; font-weight:600; letter-spacing:1.1px; text-transform:uppercase; color:#565c64; margin-bottom:6px;">Comando</div>
+            <div style="padding:10px 12px; background:#0a0c0f; border:1px solid rgba(255,255,255,.07); border-radius:8px; font-family:'JetBrains Mono'; font-size:12.5px; color:#c9cdd2;"><span style="color:#63d29b;">$</span> sudo apt-get install -y tmux</div>
+          </div>
+
+          <div>
+            <div style="font-size:10.5px; font-weight:600; letter-spacing:1.1px; text-transform:uppercase; color:#565c64; margin-bottom:7px;">Senha do sudo</div>
+            <div style="display:flex; flex-direction:column; gap:7px;">
+              <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; background:linear-gradient(135deg,rgba(224,161,94,.16),rgba(201,104,63,.08)); border:1px solid rgba(224,161,94,.4); border-radius:9px;">
+                <span style="width:15px; height:15px; border-radius:50%; border:4.5px solid #e0a15e; flex:none;"></span>
+                <div style="flex:1;">
+                  <div style="font-size:13px; font-weight:600; color:#f0c99a;">Usar senha do Vault</div>
+                  <div style="font-size:11px; color:#a97a68; font-family:'JetBrains Mono';">sudo · deploy@staging-api</div>
+                </div>
+                <span style="display:flex; align-items:center; gap:5px; font-size:10px; font-weight:600; font-family:'JetBrains Mono'; color:#e0a15e; background:rgba(224,161,94,.16); border-radius:4px; padding:2px 6px;">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" stroke-width="2"><path d="M12 11a4 4 0 0 1 4 4v0M12 11a4 4 0 0 0-4 4v2a4 4 0 0 0 8 0"/><path d="M12 3a7 7 0 0 1 7 7v1M12 3a7 7 0 0 0-7 7v4"/></svg>
+                  TOUCH ID
+                </span>
+              </div>
+              <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:9px;">
+                <span style="width:15px; height:15px; border-radius:50%; border:1.5px solid #565c64; flex:none;"></span>
+                <div style="flex:1;">
+                  <div style="font-size:13px; font-weight:500; color:#c9cdd2;">Digitar agora</div>
+                  <div style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">usada uma vez · não será salva</div>
+                </div>
+                <span style="font-family:'JetBrains Mono'; font-size:13px; color:#565c64; letter-spacing:2px;">••••••••</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:9px; padding:9px 12px; background:rgba(99,210,155,.06); border:1px solid rgba(99,210,155,.16); border-radius:8px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#63d29b" stroke-width="1.8" style="flex:none; margin-top:1px;"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+            <div style="font-size:11.5px; color:#7fa892; line-height:1.5;">A senha é enviada por <span style="font-family:'JetBrains Mono'; color:#8fe3ba;">stdin (sudo -S)</span> dentro da sessão criptografada — nunca aparece no terminal, no histórico do shell ou em logs.</div>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:9px; padding:16px 22px 20px;">
+          <span style="font-size:11.5px; color:#565c64; font-family:'JetBrains Mono';">~10s</span>
+          <div style="flex:1;"></div>
+          <div style="height:36px; display:flex; align-items:center; padding:0 16px; border:1px solid rgba(255,255,255,.1); border-radius:8px; font-size:13px; font-weight:500; color:#a2a8b0; cursor:pointer;">Agora não</div>
+          <div style="height:36px; display:flex; align-items:center; gap:7px; padding:0 18px; background:#e0a15e; border-radius:8px; font-size:13px; font-weight:600; color:#1a0f08; cursor:pointer;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1a0f08" stroke-width="2.2"><path d="M12 11a4 4 0 0 1 4 4v0M12 11a4 4 0 0 0-4 4v2a4 4 0 0 0 8 0"/><path d="M12 3a7 7 0 0 1 7 7v1M12 3a7 7 0 0 0-7 7v4"/></svg>
+            Autorizar e instalar
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<section style="padding:48px; display:flex; gap:56px; align-items:flex-start; font-family:'Inter Tight',system-ui,sans-serif;">
+
+  <!-- 1a · Grid mode -->
+  <div id="1a" style="flex:none;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+      <a href="#1a" style="text-decoration:none; font-size:12px; font-weight:700; font-family:'JetBrains Mono'; color:#e0a15e; background:rgba(224,161,94,.14); border:1px solid rgba(224,161,94,.3); border-radius:6px; padding:3px 9px;">1a</a>
+      <span style="font-size:14px; font-weight:600; color:#c9cdd2;">Modo grid — todas as sessões</span>
+    </div>
+    <dc-import name="Helm - Terminal Manager" initial-view="grid" hint-size="1440px,920px" style="width:1440px; height:920px; display:block;"></dc-import>
+  </div>
+
+  <!-- 1b · Add host -->
+  <div id="1b" style="flex:none;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+      <a href="#1b" style="text-decoration:none; font-size:12px; font-weight:700; font-family:'JetBrains Mono'; color:#e0a15e; background:rgba(224,161,94,.14); border:1px solid rgba(224,161,94,.3); border-radius:6px; padding:3px 9px;">1b</a>
+      <span style="font-size:14px; font-weight:600; color:#c9cdd2;">Adicionar host</span>
+    </div>
+    <div style="width:1440px; height:920px; position:relative; border-radius:12px; overflow:hidden;">
+      <dc-import name="Helm - Terminal Manager" hint-size="1440px,920px" style="position:absolute; inset:0;"></dc-import>
+      <div style="position:absolute; inset:0; background:rgba(4,5,7,.62); backdrop-filter:blur(3px);"></div>
+      <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:520px; background:#111318; border:1px solid rgba(255,255,255,.1); border-radius:16px; box-shadow:0 40px 120px rgba(0,0,0,.7); color:#e6e8ea;">
+        <div style="display:flex; align-items:center; gap:11px; padding:18px 22px 14px;">
+          <div style="width:32px; height:32px; border-radius:9px; background:rgba(224,161,94,.14); display:flex; align-items:center; justify-content:center;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" stroke-width="1.8"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><circle cx="7" cy="7.5" r="1" fill="#e0a15e" stroke="none"/><circle cx="7" cy="16.5" r="1" fill="#e0a15e" stroke="none"/></svg>
+          </div>
+          <div style="flex:1;">
+            <div style="font-size:16px; font-weight:600;">Add host</div>
+            <div style="font-size:12px; color:#7d848d;">Credenciais guardadas no Vault, destravadas com Touch&nbsp;ID</div>
+          </div>
+          <span style="font-size:18px; color:#565c64; cursor:pointer;">×</span>
+        </div>
+
+        <div style="padding:4px 22px 6px; display:flex; flex-direction:column; gap:13px;">
+          <div style="display:grid; grid-template-columns:1fr 130px; gap:10px;">
+            <div>
+              <div style="font-size:10.5px; font-weight:600; letter-spacing:1.1px; text-transform:uppercase; color:#565c64; margin-bottom:6px;">Nome</div>
+              <div style="height:36px; display:flex; align-items:center; padding:0 12px; background:rgba(255,255,255,.04); border:1px solid rgba(224,161,94,.4); border-radius:8px; font-size:13px;">atlas<span style="width:1.5px; height:16px; background:#e0a15e; margin-left:2px;"></span></div>
+            </div>
+            <div>
+              <div style="font-size:10.5px; font-weight:600; letter-spacing:1.1px; text-transform:uppercase; color:#565c64; margin-bottom:6px;">Grupo</div>
+              <div style="height:36px; display:flex; align-items:center; justify-content:space-between; padding:0 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:8px; font-size:13px;">Production <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#7d848d" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg></div>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 90px; gap:10px;">
+            <div>
+              <div style="font-size:10.5px; font-weight:600; letter-spacing:1.1px; text-transform:uppercase; color:#565c64; margin-bottom:6px;">Endereço SSH</div>
+              <div style="height:36px; display:flex; align-items:center; padding:0 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:8px; font-size:13px; font-family:'JetBrains Mono';">deploy@10.4.2.18</div>
+            </div>
+            <div>
+              <div style="font-size:10.5px; font-weight:600; letter-spacing:1.1px; text-transform:uppercase; color:#565c64; margin-bottom:6px;">Porta</div>
+              <div style="height:36px; display:flex; align-items:center; padding:0 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:8px; font-size:13px; font-family:'JetBrains Mono';">22</div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:10.5px; font-weight:600; letter-spacing:1.1px; text-transform:uppercase; color:#565c64; margin-bottom:6px;">Autenticação</div>
+            <div style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:8px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+              <div style="flex:1;">
+                <div style="font-size:13px; font-weight:500;">id_ed25519 · atlas</div>
+                <div style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">chave + passphrase no Vault</div>
+              </div>
+              <span style="font-size:10px; font-weight:600; font-family:'JetBrains Mono'; color:#63d29b; background:rgba(99,210,155,.12); border-radius:4px; padding:2px 6px;">VAULT</span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#7d848d" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <div style="border-top:1px solid rgba(255,255,255,.07); padding-top:12px; display:flex; flex-direction:column; gap:9px;">
+            <div style="display:flex; align-items:center; gap:11px;">
+              <div style="width:34px; height:20px; border-radius:10px; background:#e0a15e; position:relative; flex:none;"><span style="position:absolute; top:2px; right:2px; width:16px; height:16px; border-radius:50%; background:#1a0f08;"></span></div>
+              <div style="flex:1; font-size:13px;">Reconectar automaticamente</div>
+              <span style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">backoff 1–30s</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:11px;">
+              <div style="width:34px; height:20px; border-radius:10px; background:#e0a15e; position:relative; flex:none;"><span style="position:absolute; top:2px; right:2px; width:16px; height:16px; border-radius:50%; background:#1a0f08;"></span></div>
+              <div style="flex:1; font-size:13px;">Instalar tmux se não existir</div>
+              <span style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">via ssh -tt</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:11px;">
+              <div style="width:34px; height:20px; border-radius:10px; background:#e0a15e; position:relative; flex:none;"><span style="position:absolute; top:2px; right:2px; width:16px; height:16px; border-radius:50%; background:#1a0f08;"></span></div>
+              <div style="flex:1; font-size:13px;">Re-atachar última sessão ao conectar</div>
+              <span style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">tmux attach</span>
+            </div>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:9px; padding:9px 12px; background:rgba(99,210,155,.08); border:1px solid rgba(99,210,155,.22); border-radius:8px;">
+            <span style="color:#63d29b; font-size:13px;">✓</span>
+            <span style="font-size:12.5px; color:#8fe3ba; font-family:'JetBrains Mono';">Conectado · 24 ms · tmux 3.4 encontrado</span>
+            <div style="flex:1;"></div>
+            <span style="font-size:12px; color:#63d29b; font-weight:600; cursor:pointer;">Testar de novo</span>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:9px; padding:16px 22px 20px;">
+          <div style="height:36px; display:flex; align-items:center; padding:0 16px; border:1px solid rgba(255,255,255,.1); border-radius:8px; font-size:13px; font-weight:500; color:#a2a8b0; cursor:pointer;">Cancelar</div>
+          <div style="height:36px; display:flex; align-items:center; padding:0 18px; background:#e0a15e; border-radius:8px; font-size:13px; font-weight:600; color:#1a0f08; cursor:pointer;">Adicionar host</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 1c · New session -->
+  <div id="1c" style="flex:none;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+      <a href="#1c" style="text-decoration:none; font-size:12px; font-weight:700; font-family:'JetBrains Mono'; color:#e0a15e; background:rgba(224,161,94,.14); border:1px solid rgba(224,161,94,.3); border-radius:6px; padding:3px 9px;">1c</a>
+      <span style="font-size:14px; font-weight:600; color:#c9cdd2;">Nova sessão (projeto)</span>
+    </div>
+    <div style="width:1440px; height:920px; position:relative; border-radius:12px; overflow:hidden;">
+      <dc-import name="Helm - Terminal Manager" hint-size="1440px,920px" style="position:absolute; inset:0;"></dc-import>
+      <div style="position:absolute; inset:0; background:rgba(4,5,7,.62); backdrop-filter:blur(3px);"></div>
+      <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:520px; background:#111318; border:1px solid rgba(255,255,255,.1); border-radius:16px; box-shadow:0 40px 120px rgba(0,0,0,.7); color:#e6e8ea;">
+        <div style="display:flex; align-items:center; gap:11px; padding:18px 22px 14px;">
+          <div style="width:32px; height:32px; border-radius:9px; background:rgba(224,161,94,.14); display:flex; align-items:center; justify-content:center; font-family:'JetBrains Mono'; font-size:13px; font-weight:700; color:#e0a15e;">$</div>
+          <div style="flex:1;">
+            <div style="font-size:16px; font-weight:600;">Nova sessão</div>
+            <div style="font-size:12px; color:#7d848d;">O nome do projeto vira o nome da sessão tmux</div>
+          </div>
+          <span style="font-size:18px; color:#565c64; cursor:pointer;">×</span>
+        </div>
+
+        <div style="padding:4px 22px 6px; display:flex; flex-direction:column; gap:13px;">
+          <div>
+            <div style="font-size:10.5px; font-weight:600; letter-spacing:1.1px; text-transform:uppercase; color:#565c64; margin-bottom:6px;">Host</div>
+            <div style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:8px;">
+              <span style="width:8px; height:8px; border-radius:50%; background:#63d29b; box-shadow:0 0 7px #63d29b;"></span>
+              <div style="flex:1;">
+                <div style="font-size:13px; font-weight:500;">atlas</div>
+                <div style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">deploy@10.4.2.18 · conectado</div>
+              </div>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#7d848d" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div>
+              <div style="font-size:10.5px; font-weight:600; letter-spacing:1.1px; text-transform:uppercase; color:#565c64; margin-bottom:6px;">Projeto / sessão</div>
+              <div style="height:36px; display:flex; align-items:center; padding:0 12px; background:rgba(255,255,255,.04); border:1px solid rgba(224,161,94,.4); border-radius:8px; font-size:13px; font-family:'JetBrains Mono';">atlas-api<span style="width:1.5px; height:16px; background:#e0a15e; margin-left:2px;"></span></div>
+            </div>
+            <div>
+              <div style="font-size:10.5px; font-weight:600; letter-spacing:1.1px; text-transform:uppercase; color:#565c64; margin-bottom:6px;">Pasta do projeto</div>
+              <div style="height:36px; display:flex; align-items:center; gap:8px; padding:0 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:8px; font-size:12.5px; font-family:'JetBrains Mono'; color:#c9cdd2;">~/apps/atlas-api
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#7d848d" stroke-width="1.8" style="margin-left:auto;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div style="font-size:10.5px; font-weight:600; letter-spacing:1.1px; text-transform:uppercase; color:#565c64; margin-bottom:7px;">Ao conectar</div>
+            <div style="display:flex; flex-direction:column; gap:7px;">
+              <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:9px;">
+                <span style="width:15px; height:15px; border-radius:50%; border:1.5px solid #565c64; flex:none;"></span>
+                <div style="flex:1;">
+                  <div style="font-size:13px; font-weight:500; color:#c9cdd2;">Shell simples</div>
+                  <div style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">ssh · sem tmux</div>
+                </div>
+              </div>
+              <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:9px;">
+                <span style="width:15px; height:15px; border-radius:50%; border:1.5px solid #565c64; flex:none;"></span>
+                <div style="flex:1;">
+                  <div style="font-size:13px; font-weight:500; color:#c9cdd2;">tmux</div>
+                  <div style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">tmux new -As atlas-api</div>
+                </div>
+              </div>
+              <div style="display:flex; align-items:center; gap:11px; padding:10px 12px; background:linear-gradient(135deg,rgba(224,161,94,.16),rgba(201,104,63,.08)); border:1px solid rgba(224,161,94,.4); border-radius:9px;">
+                <span style="width:15px; height:15px; border-radius:50%; border:4.5px solid #e0a15e; flex:none;"></span>
+                <div style="flex:1;">
+                  <div style="font-size:13px; font-weight:600; color:#f0c99a;">clmux — Claude no tmux</div>
+                  <div style="font-size:11px; color:#a97a68; font-family:'JetBrains Mono';">cd ~/apps/atlas-api && tmux new -As atlas-api && claude</div>
+                </div>
+                <span style="font-size:10px; font-weight:600; font-family:'JetBrains Mono'; color:#e0a15e; background:rgba(224,161,94,.16); border-radius:4px; padding:2px 6px;">PADRÃO</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:11px; border-top:1px solid rgba(255,255,255,.07); padding-top:12px;">
+            <div style="width:34px; height:20px; border-radius:10px; background:#e0a15e; position:relative; flex:none;"><span style="position:absolute; top:2px; right:2px; width:16px; height:16px; border-radius:50%; background:#1a0f08;"></span></div>
+            <div style="flex:1; font-size:13px;">Re-atachar automaticamente após queda</div>
+            <span style="font-size:11px; color:#565c64; font-family:'JetBrains Mono';">detach seguro</span>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:9px; padding:16px 22px 20px;">
+          <div style="height:36px; display:flex; align-items:center; padding:0 16px; border:1px solid rgba(255,255,255,.1); border-radius:8px; font-size:13px; font-weight:500; color:#a2a8b0; cursor:pointer;">Cancelar</div>
+          <div style="height:36px; display:flex; align-items:center; padding:0 18px; background:#e0a15e; border-radius:8px; font-size:13px; font-weight:600; color:#1a0f08; cursor:pointer;">Iniciar sessão</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</x-dc>
+</body>
+</html>
