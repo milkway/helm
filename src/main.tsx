@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+// entry point
 import App from "./App";
 import "./styles/fonts.css";
 import "./styles/tokens.css";

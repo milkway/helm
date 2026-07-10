@@ -75,31 +75,37 @@ export function Term({ sessionId }: { sessionId: string }) {
     const unlisteners: Array<() => void> = [];
 
     let opened = false;
-    openLocalSession(ptyId, term.cols, term.rows)
-      .then(async () => {
-        if (disposed) {
-          closeSession(ptyId);
-          return;
-        }
-        opened = true;
-        const offData = term.onData((data) => void writeStdin(ptyId, data));
-        unlisteners.push(() => offData.dispose());
-
-        const offOutput = await onSessionOutput((payload) => {
-          if (payload.id === ptyId) term.write(base64ToBytes(payload.data));
-        });
-        unlisteners.push(offOutput);
-
-        const offExit = await onSessionExit((id) => {
-          if (id === ptyId) term.write("\r\n\x1b[38;2;86;92;100m[sessão encerrada]\x1b[0m\r\n");
-        });
-        unlisteners.push(offExit);
-      })
-      .catch((err) => {
-        term.write(`\r\n\x1b[38;2;240;120;90mfalha ao abrir PTY: ${err}\x1b[0m\r\n`);
-        // repropaga para o vite logar como unhandled rejection durante o dev
-        return Promise.reject(err);
+    (async () => {
+      // Listeners ANTES do spawn: os primeiros bytes do shell chegam já no
+      // arranque e seriam perdidos se o listener fosse registrado depois
+      // (sintoma: linha parcial + marcador "%" do zsh no primeiro prompt).
+      const offOutput = await onSessionOutput((payload) => {
+        if (payload.id === ptyId) term.write(base64ToBytes(payload.data));
       });
+      unlisteners.push(offOutput);
+
+      const offExit = await onSessionExit((id) => {
+        if (id === ptyId) term.write("\r\n\x1b[38;2;86;92;100m[sessão encerrada]\x1b[0m\r\n");
+      });
+      unlisteners.push(offExit);
+
+      if (disposed) return;
+      await openLocalSession(ptyId, term.cols, term.rows);
+      if (disposed) {
+        void closeSession(ptyId);
+        return;
+      }
+      opened = true;
+
+      const offData = term.onData((data) => {
+        if (opened) void writeStdin(ptyId, data);
+      });
+      unlisteners.push(() => offData.dispose());
+    })().catch((err) => {
+      term.write(`\r\n\x1b[38;2;240;120;90mfalha ao abrir PTY: ${err}\x1b[0m\r\n`);
+      // repropaga para o vite logar como unhandled rejection durante o dev
+      return Promise.reject(err);
+    });
 
     const observer = new ResizeObserver(() => {
       fit.fit();
@@ -107,8 +113,13 @@ export function Term({ sessionId }: { sessionId: string }) {
     });
     observer.observe(host);
 
+    // Reload de página (dev) não roda o cleanup do efeito — sem isto o PTY vaza.
+    const onUnload = () => void closeSession(ptyId);
+    window.addEventListener("beforeunload", onUnload);
+
     return () => {
       disposed = true;
+      window.removeEventListener("beforeunload", onUnload);
       observer.disconnect();
       for (const off of unlisteners) off();
       term.dispose();
