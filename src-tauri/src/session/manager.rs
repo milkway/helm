@@ -113,6 +113,8 @@ fn remote_command(mode: &str, name: &str, dir: Option<&str>) -> Option<String> {
             "{cd}if tmux has-session -t {name_q} 2>/dev/null; then tmux attach -t {name_q}; \
              else tmux new -s {name_q} \\; send-keys claude Enter; fi"
         )),
+        // shell na pasta do projeto: cd + shell de login interativo
+        "shell" if !cd.is_empty() => Some(format!("{cd}exec \"${{SHELL:-bash}}\" -l")),
         _ => None,
     }
 }

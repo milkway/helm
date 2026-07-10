@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { retrySession } from "../lib/ipc";
 import { reattachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
@@ -81,6 +82,7 @@ function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) 
 }
 
 function DetachedOverlay({ session, host }: { session: SessionInfo; host?: Host }) {
+  const [clicked, setClicked] = useState(false);
   return (
     <div className="error-overlay">
       <div className="error-card error-card--detached">
@@ -94,12 +96,17 @@ function DetachedOverlay({ session, host }: { session: SessionInfo; host?: Host 
           </div>
         </div>
         <div className="error-card__actions">
-          <div
+          <button
+            type="button"
             className="error-card__btn error-card__btn--primary"
-            onClick={() => reattachTab(session.id)}
+            style={{ border: "none", font: "inherit" }}
+            onClick={() => {
+              setClicked(true);
+              reattachTab(session.id);
+            }}
           >
-            Re-atachar
-          </div>
+            {clicked ? "Re-atachando…" : "Re-atachar"}
+          </button>
         </div>
       </div>
     </div>

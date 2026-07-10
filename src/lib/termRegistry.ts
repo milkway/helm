@@ -188,7 +188,13 @@ async function createEntry(uiId: string, hostId: string): Promise<TermEntry> {
   disposers.push(offStatus);
 
   const params = useSessionsStore.getState().sessions.find((s) => s.id === uiId)?.params;
-  await openSshSession(ptyId, hostId, term.cols || 80, term.rows || 24, params ?? undefined);
+  try {
+    await openSshSession(ptyId, hostId, term.cols || 80, term.rows || 24, params ?? undefined);
+  } catch (err) {
+    term.write(`\r\n\x1b[38;2;240;120;90mfalha ao abrir sessão: ${err}\x1b[0m\r\n`);
+    setStatus(uiId, "exited");
+    throw err;
+  }
   disposers.push(() => void closeSession(ptyId));
   useSessionsStore.getState().setPtyId(uiId, ptyId);
 

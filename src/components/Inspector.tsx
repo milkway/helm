@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
+import { detachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
-import { statusColor } from "../types";
+import { statusColor, tmuxSessionName } from "../types";
 
 function uptime(connectedAt: number | null): string {
   if (!connectedAt) return "—";
@@ -18,6 +19,7 @@ function uptime(connectedAt: number | null): string {
 export function Inspector() {
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
+  const open = useSessionsStore((s) => s.open);
   const hosts = useHostsStore((s) => s.hosts);
   const openModal = useUiStore((s) => s.openModal);
 
@@ -82,7 +84,18 @@ export function Inspector() {
 
         <div className="inspector__section inspector__section--gap">Quick launch</div>
         <div className="quick-list">
-          <div className="clmux-card">
+          <div
+            className="clmux-card"
+            style={{ cursor: "pointer" }}
+            title="Abrir o Claude dentro do tmux"
+            onClick={() =>
+              open(host.id, {
+                mode: "clmux",
+                sessionName: tmuxSessionName(host.name),
+                projectDir: host.projectDir ?? undefined,
+              })
+            }
+          >
             <div className="clmux-card__icon">cl</div>
             <div className="card-body">
               <div className="clmux-card__title">clmux → claude</div>
@@ -91,7 +104,11 @@ export function Inspector() {
               </div>
             </div>
           </div>
-          <div className="action-card">
+          <div
+            className="action-card"
+            style={{ cursor: session.status === "connected" ? "pointer" : "default", opacity: session.status === "connected" ? 1 : 0.5 }}
+            onClick={() => session.status === "connected" && detachTab(session.id)}
+          >
             <div className="action-card__icon">⏏</div>
             <div className="card-body">
               <div className="action-card__title">Detach session</div>
@@ -109,7 +126,14 @@ export function Inspector() {
               <div className="action-card__sub">ssh -tt · auto</div>
             </div>
           </div>
-          <div className="action-card">
+          <div
+            className="action-card"
+            style={{ cursor: "pointer" }}
+            title="Nova sessão shell na pasta do projeto"
+            onClick={() =>
+              open(host.id, { mode: "shell", projectDir: host.projectDir ?? undefined })
+            }
+          >
             <div className="action-card__icon">⌘</div>
             <div className="card-body">
               <div className="action-card__title">Open project shell</div>
