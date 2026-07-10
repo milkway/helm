@@ -21,14 +21,16 @@ function HostRow({ host }: { host: Host }) {
 
   const session = hostSession(sessions, host.id);
   const isActive = session != null && session.id === activeId;
-  const color = statusColor(session?.status);
+  const attention = session?.attention ?? false;
+  const color = attention ? "#f0785a" : statusColor(session?.status);
   const connected = session?.status === "connected";
   const connecting = session?.status === "connecting";
   const nameColor = isActive ? "#f4f6f8" : session ? "#d2d6db" : "#8b9199";
 
   const dotClasses = ["host-row__dot"];
-  if (connected) dotClasses.push("host-row__dot--glow");
+  if (connected && !attention) dotClasses.push("host-row__dot--glow");
   if (connecting) dotClasses.push("host-row__dot--spin");
+  if (attention) dotClasses.push("host-row__dot--pulse");
 
   return (
     <div
@@ -53,7 +55,8 @@ function HostRow({ host }: { host: Host }) {
           {host.user ? `${host.user}@${host.host}` : host.host}
         </div>
       </div>
-      {connecting && <span className="host-row__badge host-row__badge--reconnect">⟳</span>}
+      {attention && <span className="host-row__badge host-row__badge--attention">!</span>}
+      {connecting && !attention && <span className="host-row__badge host-row__badge--reconnect">⟳</span>}
       {menu && (
         <>
           <div
@@ -115,12 +118,19 @@ export function Sidebar() {
   const hosts = useHostsStore((s) => s.hosts);
   const load = useHostsStore((s) => s.load);
   const openModal = useUiStore((s) => s.openModal);
+  const sessions = useSessionsStore((s) => s.sessions);
+  const focus = useSessionsStore((s) => s.focus);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   const groups = groupHosts(hosts);
+  const attentionSessions = sessions.filter((s) => s.attention);
+  const firstAttention = attentionSessions[0];
+  const attentionHost = firstAttention
+    ? hosts.find((h) => h.id === firstAttention.hostId)
+    : undefined;
 
   return (
     <div className="sidebar">
@@ -135,6 +145,25 @@ export function Sidebar() {
           +
         </div>
       </div>
+
+      {firstAttention && (
+        <div className="attention-banner" onClick={() => focus(firstAttention.id)}>
+          <span className="attention-banner__dot" />
+          <div className="attention-banner__body">
+            <div className="attention-banner__title">
+              {attentionSessions.length === 1
+                ? "1 session needs attention"
+                : `${attentionSessions.length} sessions need attention`}
+            </div>
+            <div className="attention-banner__sub">
+              {attentionHost?.name ?? firstAttention.hostId} · aguardando input
+            </div>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f0785a" strokeWidth="2">
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        </div>
+      )}
 
       <div className="sidebar__list">
         {groups.length === 0 && (

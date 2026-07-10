@@ -41,7 +41,10 @@ export function TabsToolbar() {
             className={`tab${active ? " tab--active" : ""}`}
             onClick={() => focus(session.id)}
           >
-            <span className="tab__dot" style={{ background: statusColor(session.status) }} />
+            <span
+              className={`tab__dot${session.attention ? " tab__dot--pulse" : ""}`}
+              style={{ background: session.attention ? "#f0785a" : statusColor(session.status) }}
+            />
             <span className="tab__label">
               {session.params?.sessionName ?? hostName(session.hostId)}
             </span>

@@ -107,6 +107,16 @@ export function onSessionStatus(
   return listen<SessionStatusPayload>("session-status", (event) => handler(event.payload));
 }
 
+export interface AttentionPayload {
+  id: string;
+  active: boolean;
+  reason?: string;
+}
+
+export function onAttention(handler: (payload: AttentionPayload) => void): Promise<UnlistenFn> {
+  return listen<AttentionPayload>("attention", (event) => handler(event.payload));
+}
+
 export function detachSession(id: string): Promise<void> {
   return invoke("detach_session", { id });
 }

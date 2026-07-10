@@ -156,6 +156,33 @@ export function TerminalView() {
           </div>
         );
       })}
+      <AttentionToast />
+    </div>
+  );
+}
+
+/** Toast de atenção no canto inferior direito, para a 1ª sessão em atenção
+ * que não seja a ativa. "Jump →" foca a sessão. */
+function AttentionToast() {
+  const sessions = useSessionsStore((s) => s.sessions);
+  const activeId = useSessionsStore((s) => s.activeId);
+  const focus = useSessionsStore((s) => s.focus);
+  const hosts = useHostsStore((s) => s.hosts);
+
+  const target = sessions.find((s) => s.attention && s.id !== activeId);
+  if (!target) return null;
+  const host = hosts.find((h) => h.id === target.hostId);
+
+  return (
+    <div className="attn-toast">
+      <span className="attn-toast__dot" />
+      <div>
+        <div className="attn-toast__title">{host?.name ?? target.hostId} waiting</div>
+        <div className="attn-toast__sub">aguardando input do usuário</div>
+      </div>
+      <div className="attn-toast__jump" onClick={() => focus(target.id)}>
+        Jump →
+      </div>
     </div>
   );
 }

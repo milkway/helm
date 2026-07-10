@@ -7,6 +7,7 @@ import {
   base64ToBytes,
   closeSession,
   detachSession,
+  onAttention,
   onSessionOutput,
   onSessionStatus,
   openSshSession,
@@ -186,6 +187,11 @@ async function createEntry(uiId: string, hostId: string): Promise<TermEntry> {
     }
   });
   disposers.push(offStatus);
+
+  const offAttention = await onAttention((payload) => {
+    if (payload.id === ptyId) useSessionsStore.getState().setAttention(uiId, payload.active);
+  });
+  disposers.push(offAttention);
 
   const params = useSessionsStore.getState().sessions.find((s) => s.id === uiId)?.params;
   try {

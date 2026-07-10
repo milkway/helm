@@ -34,6 +34,7 @@ interface SessionsState {
   close: (id: string) => void;
   setStatus: (id: string, status: SessionStatus, attempt?: number | null, delaySecs?: number | null) => void;
   setPtyId: (id: string, ptyId: string | null) => void;
+  setAttention: (id: string, active: boolean) => void;
   /** força remontagem do Term (re-attach após detach/erro terminal) */
   reattach: (id: string) => void;
 }
@@ -57,6 +58,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
           generation: 0,
           log: [],
           params: params ?? null,
+          attention: false,
         },
       ],
       activeId: id,
@@ -64,7 +66,12 @@ export const useSessionsStore = create<SessionsState>((set) => ({
     return id;
   },
 
-  focus: (id) => set({ activeId: id }),
+  // focar a sessão limpa a atenção (o usuário está olhando para ela)
+  focus: (id) =>
+    set((s) => ({
+      activeId: id,
+      sessions: s.sessions.map((x) => (x.id === id ? { ...x, attention: false } : x)),
+    })),
 
   close: (id) =>
     set((s) => {
@@ -98,6 +105,14 @@ export const useSessionsStore = create<SessionsState>((set) => ({
       sessions: s.sessions.map((x) => (x.id === id ? { ...x, ptyId } : x)),
     })),
 
+  setAttention: (id, active) =>
+    set((s) => ({
+      // não marca atenção na aba que já está ativa (usuário está olhando)
+      sessions: s.sessions.map((x) =>
+        x.id === id ? { ...x, attention: active && x.id !== s.activeId } : x,
+      ),
+    })),
+
   reattach: (id) =>
     set((s) => ({
       sessions: s.sessions.map((x) =>
@@ -109,6 +124,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
               attempt: null,
               connectedAt: null,
               log: x.log,
+              attention: false,
             }
           : x,
       ),

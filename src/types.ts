@@ -40,6 +40,8 @@ export interface SessionInfo {
   log: string[];
   /** overrides da Nova sessão (1c); null = defaults do host */
   params: import("./lib/ipc").SessionParams | null;
+  /** sessão aguardando input do usuário (Fase 8) */
+  attention: boolean;
 }
 
 export const STATUS_COLORS = {

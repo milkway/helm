@@ -24,13 +24,19 @@ const ERROR_RETRY_SECS: u64 = 60;
 const MIN_STABLE_SECS: u64 = 5;
 
 pub struct Session {
-    #[allow(dead_code)] // usado nas fases de attention/latência
+    #[allow(dead_code)] // usado nas fases de latência
     host_id: Option<String>,
     closed: AtomicBool,
     detached: AtomicBool,
     retry_now: AtomicBool,
     size: Mutex<(u16, u16)>,
     io: Mutex<Option<Io>>,
+    // detecção de atenção (Fase 8)
+    connected: AtomicBool,
+    attention: AtomicBool,
+    output_tail: Mutex<String>,
+    last_output: Mutex<Instant>,
+    last_input: Mutex<Instant>,
 }
 
 struct Io {
@@ -59,6 +65,74 @@ struct StatusPayload<'a> {
     attempt: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     delay_secs: Option<u64>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AttentionPayload<'a> {
+    id: &'a str,
+    active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+}
+
+fn set_attention(app: &AppHandle, session: &Session, id: &str, active: bool, reason: Option<&str>) {
+    let was = session.attention.swap(active, Ordering::Relaxed);
+    if was != active {
+        let _ = app.emit("attention", AttentionPayload { id, active, reason });
+    }
+}
+
+/// Remove sequências ANSI/escape para analisar o texto "cru" do prompt.
+fn strip_ansi(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b {
+            i += 1;
+            if i < bytes.len() && bytes[i] == b'[' {
+                i += 1;
+                while i < bytes.len() && !bytes[i].is_ascii_alphabetic() {
+                    i += 1;
+                }
+                i += 1; // consome a letra final
+            } else if i < bytes.len() && bytes[i] == b']' {
+                // OSC até BEL ou ST
+                while i < bytes.len() && bytes[i] != 0x07 && bytes[i] != 0x1b {
+                    i += 1;
+                }
+                i += 1;
+            } else {
+                i += 1;
+            }
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Heurística: a cauda do output parece um prompt interativo aguardando input?
+/// Prompts de shell "ociosos" ($ # >) NÃO contam — só perguntas/confirmações.
+fn looks_like_prompt(tail: &str) -> bool {
+    let clean = strip_ansi(tail);
+    let trimmed = clean.trim_end();
+    let last = trimmed.lines().last().unwrap_or("").trim();
+    let low = trimmed.to_lowercase();
+
+    if last.ends_with('?') || last.ends_with("? ") {
+        return true;
+    }
+    const NEEDLES: &[&str] = &[
+        "(y/n)", "[y/n]", "(yes/no)", "(y/n/a)", "[y/n/a]",
+        "password:", "passphrase", "password for",
+        "do you want", "are you sure", "proceed?", "continue?",
+        "overwrite?", "confirm", "press enter", "❯",
+        "aguardando", "waiting for input",
+    ];
+    NEEDLES.iter().any(|n| low.contains(n))
 }
 
 fn emit_status(app: &AppHandle, id: &str, status: &str, attempt: Option<u32>, delay: Option<u64>) {
@@ -239,6 +313,7 @@ fn manager_loop(
                 let started = Instant::now();
                 let mut got_output = false;
                 let mut buf = [0u8; 8192];
+                session.connected.store(true, Ordering::Relaxed);
                 loop {
                     match handles.reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
@@ -247,6 +322,18 @@ fn manager_loop(
                                 got_output = true;
                                 emit_status(&app, &id, "connected", None, None);
                             }
+                            // rastreia a cauda do output para a heurística de atenção
+                            {
+                                let mut tail = session.output_tail.lock().unwrap();
+                                tail.push_str(&String::from_utf8_lossy(&buf[..n]));
+                                let len = tail.len();
+                                if len > 400 {
+                                    *tail = tail[len - 400..].to_string();
+                                }
+                            }
+                            *session.last_output.lock().unwrap() = Instant::now();
+                            // novo output = atividade → limpa atenção
+                            set_attention(&app, &session, &id, false, None);
                             let _ = app.emit(
                                 "session-output",
                                 OutputPayload {
@@ -257,6 +344,8 @@ fn manager_loop(
                         }
                     }
                 }
+                session.connected.store(false, Ordering::Relaxed);
+                set_attention(&app, &session, &id, false, None);
                 *session.io.lock().unwrap() = None;
                 (started.elapsed(), got_output)
             }
@@ -321,6 +410,11 @@ fn start_session(
         retry_now: AtomicBool::new(false),
         size: Mutex::new((cols, rows)),
         io: Mutex::new(None),
+        connected: AtomicBool::new(false),
+        attention: AtomicBool::new(false),
+        output_tail: Mutex::new(String::new()),
+        last_output: Mutex::new(Instant::now()),
+        last_input: Mutex::new(Instant::now()),
     });
     sessions.0.lock().unwrap().insert(id.clone(), session.clone());
     std::thread::spawn(move || manager_loop(app, id, session, host, params));
@@ -355,12 +449,51 @@ pub fn open_ssh_session(
 }
 
 #[tauri::command]
-pub fn write_stdin(sessions: State<'_, Sessions>, id: String, data: String) -> Result<(), String> {
+pub fn write_stdin(
+    app: AppHandle,
+    sessions: State<'_, Sessions>,
+    id: String,
+    data: String,
+) -> Result<(), String> {
     let session = get(&sessions, &id)?;
+    // tecla do usuário → registra input e limpa atenção
+    *session.last_input.lock().unwrap() = Instant::now();
+    set_attention(&app, &session, &id, false, None);
     let mut io = session.io.lock().unwrap();
     let io = io.as_mut().ok_or("sessão sem PTY ativo")?;
     io.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
     io.writer.flush().map_err(|e| e.to_string())
+}
+
+const ATTENTION_SETTLE: Duration = Duration::from_secs(2);
+const ATTENTION_IDLE: Duration = Duration::from_secs(5);
+
+/// Thread que detecta sessões aguardando input: prompt interativo na cauda do
+/// output + output parado + sem tecla do usuário por alguns segundos.
+pub fn spawn_attention_monitor(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(1));
+        let Some(sessions) = app.try_state::<Sessions>() else { continue };
+        let snapshot: Vec<(String, Arc<Session>)> = {
+            let map = sessions.0.lock().unwrap();
+            map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+        for (id, session) in snapshot {
+            if !session.connected.load(Ordering::Relaxed)
+                || session.attention.load(Ordering::Relaxed)
+            {
+                continue;
+            }
+            let settled = session.last_output.lock().unwrap().elapsed() >= ATTENTION_SETTLE;
+            let idle = session.last_input.lock().unwrap().elapsed() >= ATTENTION_IDLE;
+            if settled && idle {
+                let tail = session.output_tail.lock().unwrap().clone();
+                if looks_like_prompt(&tail) {
+                    set_attention(&app, &session, &id, true, Some("aguardando input"));
+                }
+            }
+        }
+    });
 }
 
 #[tauri::command]

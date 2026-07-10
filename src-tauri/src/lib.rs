@@ -17,6 +17,7 @@ pub fn run() {
             let v = vault::Vault::default();
             vault::spawn_auto_lock(app.handle().clone(), v.0.clone());
             app.manage(v);
+            manager::spawn_attention_monitor(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
