@@ -70,7 +70,15 @@ function HostRow({ host }: { host: Host }) {
               setMenu(null);
             }}
           />
-          <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
+          <div
+            className="ctx-menu"
+            style={{
+              // mantém o menu dentro da janela (não corta na borda)
+              left: Math.min(menu.x, window.innerWidth - 176),
+              top: Math.min(menu.y, window.innerHeight - 176),
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div
               className="ctx-menu__item"
               onClick={() => {
@@ -118,6 +126,8 @@ export function Sidebar() {
   const hosts = useHostsStore((s) => s.hosts);
   const load = useHostsStore((s) => s.load);
   const openModal = useUiStore((s) => s.openModal);
+  const collapsedGroups = useUiStore((s) => s.collapsedGroups);
+  const toggleGroup = useUiStore((s) => s.toggleGroup);
   const sessions = useSessionsStore((s) => s.sessions);
   const focus = useSessionsStore((s) => s.focus);
 
@@ -169,20 +179,34 @@ export function Sidebar() {
         {groups.length === 0 && (
           <div className="sidebar__empty">Nenhum host ainda</div>
         )}
-        {groups.map((group) => (
+        {groups.map((group) => {
+          const collapsed = collapsedGroups.includes(group.name);
+          return (
           <div className="group" key={group.name}>
-            <div className="group__header">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
+            <div
+              className="group__header"
+              style={{ cursor: "pointer" }}
+              onClick={() => toggleGroup(group.name)}
+            >
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                style={{ transform: collapsed ? "rotate(-90deg)" : "none", transition: "transform .15s" }}
+              >
                 <path d="M6 9l6 6 6-6" />
               </svg>
               <span className="group__name">{group.name}</span>
               <span className="group__count">{group.hosts.length}</span>
             </div>
-            {group.hosts.map((host) => (
-              <HostRow key={host.id} host={host} />
-            ))}
+            {!collapsed &&
+              group.hosts.map((host) => <HostRow key={host.id} host={host} />)}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       <VaultFooter />

@@ -1,6 +1,7 @@
 mod db;
 mod remote;
 mod session;
+mod sshconfig;
 mod vault;
 
 use session::manager;
@@ -43,6 +44,8 @@ pub fn run() {
             remote::test_connection,
             remote::detect_remote,
             remote::install_tmux,
+            sshconfig::import_ssh_config,
+            sshconfig::app_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

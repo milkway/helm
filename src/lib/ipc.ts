@@ -84,6 +84,21 @@ export function deleteHost(id: string): Promise<void> {
   return invoke("delete_host", { id });
 }
 
+export function importSshConfig(): Promise<number> {
+  return invoke("import_ssh_config");
+}
+
+export interface AppInfo {
+  version: string;
+  build: string;
+  arch: string;
+  os: string;
+}
+
+export function appInfo(): Promise<AppInfo> {
+  return invoke("app_info");
+}
+
 export interface SessionOutput {
   id: string;
   /** chunk de bytes do PTY em base64 */

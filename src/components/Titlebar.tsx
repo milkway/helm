@@ -1,4 +1,5 @@
 import { useSessionsStore } from "../stores/sessions";
+import { useUiStore } from "../stores/ui";
 
 const IS_MAC = navigator.userAgent.includes("Mac");
 
@@ -6,6 +7,8 @@ export function Titlebar() {
   const connected = useSessionsStore(
     (s) => s.sessions.filter((x) => x.status === "connected").length,
   );
+  const togglePalette = useUiStore((s) => s.togglePalette);
+  const openModal = useUiStore((s) => s.openModal);
   return (
     <div className="titlebar" data-tauri-drag-region>
       {IS_MAC ? (
@@ -22,7 +25,11 @@ export function Titlebar() {
         <span className="titlebar__name">Helm</span>
       </div>
       <div className="titlebar__center" data-tauri-drag-region>
-        <div className="titlebar__search">
+        <div
+          className="titlebar__search"
+          style={{ cursor: "text" }}
+          onClick={() => togglePalette(true)}
+        >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#7d848d" strokeWidth="2">
             <circle cx="11" cy="11" r="7" />
             <path d="M21 21l-4-4" />
@@ -38,7 +45,12 @@ export function Titlebar() {
             {connected} connected
           </span>
         </div>
-        <div className="titlebar__settings">
+        <div
+          className="titlebar__settings"
+          style={{ cursor: "pointer" }}
+          title="Sobre o Helm"
+          onClick={() => openModal({ kind: "about" })}
+        >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a2a8b0" strokeWidth="1.8">
             <circle cx="12" cy="12" r="3" />
             <path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" />
