@@ -13,10 +13,12 @@ import { InstallTmuxModal } from "./components/InstallTmuxModal";
 import { CommandPalette } from "./components/CommandPalette";
 import { AboutModal } from "./components/AboutModal";
 import { EmptyState } from "./components/EmptyState";
+import { VpnPanel } from "./components/VpnPanel";
 import { detachTab } from "./lib/termRegistry";
 import { useHostsStore } from "./stores/hosts";
 import { useSessionsStore } from "./stores/sessions";
 import { useUiStore } from "./stores/ui";
+import { sessionUsesTmux } from "./types";
 
 export default function App() {
   const view = useUiStore((s) => s.view);
@@ -39,7 +41,8 @@ export default function App() {
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d") {
         const { sessions, activeId } = useSessionsStore.getState();
         const active = sessions.find((s) => s.id === activeId);
-        if (active) {
+        const host = active && useHostsStore.getState().hosts.find((h) => h.id === active.hostId);
+        if (active && sessionUsesTmux(active, host || undefined)) {
           e.preventDefault();
           detachTab(active.id);
         }
@@ -65,6 +68,7 @@ export default function App() {
       </div>
       <VaultModal />
       <CommandPalette />
+      <VpnPanel />
       {modal?.kind === "addHost" && <HostModal />}
       {modal?.kind === "editHost" && <HostModal editHostId={modal.hostId} />}
       {modal?.kind === "newSession" && <NewSessionModal presetHostId={modal.hostId} />}

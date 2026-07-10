@@ -694,6 +694,54 @@
 .statusbar__accent { color: var(--accent); }
 .statusbar__gap { margin: 0 10px; }
 
+/* ── Painel de VPNs (design 4a) ───────────────────────────────────────── */
+.vpn-panel__scrim { position: fixed; inset: 0; z-index: 60; }
+.vpn-panel {
+  position: fixed;
+  right: 20px;
+  top: 96px;
+  z-index: 61;
+  width: 330px;
+  padding: 15px;
+  background: var(--bg-modal);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  animation: helm-fade 0.2s ease;
+}
+.vpn-panel__header { display: flex; align-items: center; gap: 9px; margin-bottom: 11px; }
+.vpn-panel__title { font-size: 13px; font-weight: 600; }
+.vpn-panel__via { font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono); }
+.vpn-panel__list { display: flex; flex-direction: column; gap: 6px; }
+.vpn-panel__empty { font-size: 12px; color: var(--text-muted); padding: 6px 2px; }
+.vpn-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+}
+.vpn-row--on {
+  background: rgba(94, 169, 224, 0.08);
+  border-color: rgba(94, 169, 224, 0.24);
+}
+.vpn-row__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.vpn-row__body { flex: 1; min-width: 0; }
+.vpn-row__name { font-size: 12.5px; font-weight: 600; }
+.vpn-row--on .vpn-row__name { font-weight: 600; }
+.vpn-row__sub { font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono); }
+.vpn-row__action { font-size: 11px; color: var(--text-3); cursor: pointer; flex: none; }
+.vpn-row__action:hover { color: var(--text); }
+.vpn-panel__footer {
+  display: flex;
+  align-items: center;
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border-2);
+}
+
 /* ── Command palette (design 3b) ──────────────────────────────────────── */
 .palette-backdrop {
   align-items: flex-start;

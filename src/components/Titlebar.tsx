@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
+import { useVpnStore } from "../stores/vpn";
 
 const IS_MAC = navigator.userAgent.includes("Mac");
 
@@ -9,6 +11,15 @@ export function Titlebar() {
   );
   const togglePalette = useUiStore((s) => s.togglePalette);
   const openModal = useUiStore((s) => s.openModal);
+  const vpnConnected = useVpnStore((s) => s.profiles.some((p) => p.state === "connected"));
+  const toggleVpn = useVpnStore((s) => s.togglePanel);
+  const loadVpn = useVpnStore((s) => s.load);
+
+  // carrega o estado da VPN uma vez para o indicador da titlebar
+  useEffect(() => {
+    void loadVpn();
+  }, [loadVpn]);
+
   return (
     <div className="titlebar" data-tauri-drag-region>
       {IS_MAC ? (
@@ -44,6 +55,23 @@ export function Titlebar() {
           <span className="titlebar__connected-label">
             {connected} connected
           </span>
+        </div>
+        <div
+          className="titlebar__settings"
+          style={{ cursor: "pointer" }}
+          title={vpnConnected ? "VPN conectada" : "VPNs"}
+          onClick={() => toggleVpn()}
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke={vpnConnected ? "#5aa9e0" : "#a2a8b0"}
+            strokeWidth="1.8"
+          >
+            <path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z" />
+          </svg>
         </div>
         <div
           className="titlebar__settings"

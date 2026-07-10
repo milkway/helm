@@ -7,19 +7,31 @@ import { useUiStore } from "../stores/ui";
 import { hostAddr, type Host, type SessionInfo } from "../types";
 import { TermHost } from "./TermHost";
 
-function ConnectingOverlay({ host, reconnect, attempt }: { host?: Host; reconnect: boolean; attempt: number | null }) {
+function ConnectingOverlay({
+  host,
+  reconnect,
+  vpn,
+  attempt,
+}: {
+  host?: Host;
+  reconnect: boolean;
+  vpn: boolean;
+  attempt: number | null;
+}) {
+  const title = vpn
+    ? `Conectando VPN "${host?.vpnProfile ?? ""}"…`
+    : reconnect
+      ? `Reconectando — tentativa ${attempt ?? 1}/5`
+      : `Conectando a ${host?.name ?? "host"}…`;
+  const sub = vpn
+    ? "este host requer VPN · antes do SSH"
+    : `ssh ${host ? (host.user ? `${host.user}@${host.host}` : host.host) : ""}`;
   return (
     <div className="connect-overlay">
       <span className="connect-overlay__spinner" />
       <div>
-        <div className="connect-overlay__title">
-          {reconnect
-            ? `Reconectando — tentativa ${attempt ?? 1}/5`
-            : `Conectando a ${host?.name ?? "host"}…`}
-        </div>
-        <div className="connect-overlay__sub">
-          ssh {host ? (host.user ? `${host.user}@${host.host}` : host.host) : ""}
-        </div>
+        <div className="connect-overlay__title">{title}</div>
+        <div className="connect-overlay__sub">{sub}</div>
       </div>
     </div>
   );
@@ -144,10 +156,13 @@ export function TerminalView() {
               active={session.id === activeId}
               fontSize={13}
             />
-            {(session.status === "connecting" || session.status === "reconnecting") && (
+            {(session.status === "connecting" ||
+              session.status === "reconnecting" ||
+              session.status === "vpn") && (
               <ConnectingOverlay
                 host={host}
                 reconnect={session.status === "reconnecting"}
+                vpn={session.status === "vpn"}
                 attempt={session.attempt}
               />
             )}

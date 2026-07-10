@@ -90,7 +90,7 @@ pub fn import_ssh_config(db: State<'_, Db>) -> Result<u32, String> {
     let parsed = parse(&content);
     let conn = db.0.lock().unwrap();
 
-    // endereços já cadastrados (para não duplicar)
+    // aliases já cadastrados (para não duplicar)
     let existing: std::collections::HashSet<String> = {
         let mut stmt = conn.prepare("SELECT host FROM hosts").map_err(|e| e.to_string())?;
         let rows = stmt
@@ -101,16 +101,19 @@ pub fn import_ssh_config(db: State<'_, Db>) -> Result<u32, String> {
 
     let mut imported = 0u32;
     for p in parsed {
-        if p.host_name.starts_with('-') || existing.contains(&p.host_name) {
+        // Conecta pelo ALIAS — o ~/.ssh/config resolve HostName/User/Port/
+        // IdentityFile/ProxyCommand. Guardar o IP resolvido perderia essas
+        // opções (chave, proxy) e a conexão falharia.
+        if p.alias.starts_with('-') || existing.contains(&p.alias) {
             continue;
         }
         let host = Host {
             id: uuid_like(&p.alias, imported),
             name: p.alias.clone(),
             group: "SSH config".into(),
-            user: p.user,
-            host: p.host_name,
-            port: p.port,
+            user: None,
+            host: p.alias.clone(),
+            port: None,
             credential_ref: None,
             vpn_profile: None,
             auto_reconnect: true,

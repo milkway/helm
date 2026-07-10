@@ -3,7 +3,7 @@ import { detachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
-import { statusColor, tmuxSessionName } from "../types";
+import { sessionUsesTmux, statusColor, tmuxSessionName } from "../types";
 
 function uptime(connectedAt: number | null): string {
   if (!connectedAt) return "—";
@@ -104,17 +104,24 @@ export function Inspector() {
               </div>
             </div>
           </div>
-          <div
-            className="action-card"
-            style={{ cursor: session.status === "connected" ? "pointer" : "default", opacity: session.status === "connected" ? 1 : 0.5 }}
-            onClick={() => session.status === "connected" && detachTab(session.id)}
-          >
-            <div className="action-card__icon">⏏</div>
-            <div className="card-body">
-              <div className="action-card__title">Detach session</div>
-              <div className="action-card__sub">keeps running on server</div>
-            </div>
-          </div>
+          {(() => {
+            const canDetach = session.status === "connected" && sessionUsesTmux(session, host);
+            return (
+              <div
+                className="action-card"
+                style={{ cursor: canDetach ? "pointer" : "default", opacity: canDetach ? 1 : 0.5 }}
+                onClick={() => canDetach && detachTab(session.id)}
+              >
+                <div className="action-card__icon">⏏</div>
+                <div className="card-body">
+                  <div className="action-card__title">Detach session</div>
+                  <div className="action-card__sub">
+                    {sessionUsesTmux(session, host) ? "keeps running on server" : "sessão sem tmux"}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
           <div
             className="action-card"
             style={{ cursor: "pointer" }}

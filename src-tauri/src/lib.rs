@@ -3,6 +3,7 @@ mod remote;
 mod session;
 mod sshconfig;
 mod vault;
+mod vpn;
 
 use session::manager;
 use tauri::Manager;
@@ -19,6 +20,7 @@ pub fn run() {
             vault::spawn_auto_lock(app.handle().clone(), v.0.clone());
             app.manage(v);
             manager::spawn_attention_monitor(app.handle().clone());
+            app.manage(vpn::Vpn::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -46,6 +48,11 @@ pub fn run() {
             remote::install_tmux,
             sshconfig::import_ssh_config,
             sshconfig::app_info,
+            vpn::vpn_list,
+            vpn::vpn_connect,
+            vpn::vpn_disconnect,
+            vpn::vpn_set_auto_disconnect,
+            vpn::vpn_get_auto_disconnect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

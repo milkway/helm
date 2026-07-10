@@ -17,6 +17,7 @@ export interface Host {
 
 /** Estados da máquina de sessão (manager.rs). */
 export type SessionStatus =
+  | "vpn"
   | "connecting"
   | "connected"
   | "reconnecting"
@@ -58,6 +59,7 @@ export function statusColor(status: SessionStatus | undefined): string {
       return STATUS_COLORS.connected;
     case "connecting":
     case "reconnecting":
+    case "vpn":
       return STATUS_COLORS.reconnect;
     case "error":
       return STATUS_COLORS.attention;
@@ -75,4 +77,11 @@ export function tmuxSessionName(name: string): string {
 export function hostAddr(host: Host): string {
   const base = host.user ? `${host.user}@${host.host}` : host.host;
   return host.port ? `${base}:${host.port}` : base;
+}
+
+/** A sessão roda dentro de um tmux? (Detach só faz sentido nesse caso.) */
+export function sessionUsesTmux(session: SessionInfo, host: Host | undefined): boolean {
+  if (session.params) return session.params.mode !== "shell";
+  if (!host) return false;
+  return host.autoAttach || host.startupMode !== "shell";
 }

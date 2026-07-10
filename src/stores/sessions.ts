@@ -9,6 +9,8 @@ function timestamp(): string {
 function logLine(status: SessionStatus, attempt: number | null, delaySecs: number | null): string {
   const t = timestamp();
   switch (status) {
+    case "vpn":
+      return `${t} conectando VPN…`;
     case "connecting":
       return `${t} conectando…`;
     case "connected":

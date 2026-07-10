@@ -99,6 +99,36 @@ export function appInfo(): Promise<AppInfo> {
   return invoke("app_info");
 }
 
+export interface VpnProfile {
+  name: string;
+  state: "connected" | "disconnected" | "connecting";
+  hostsUsing: number;
+}
+
+export function vpnList(): Promise<VpnProfile[]> {
+  return invoke("vpn_list");
+}
+
+export function vpnConnect(profile: string): Promise<void> {
+  return invoke("vpn_connect", { profile });
+}
+
+export function vpnDisconnect(profile: string): Promise<void> {
+  return invoke("vpn_disconnect", { profile });
+}
+
+export function vpnSetAutoDisconnect(enabled: boolean): Promise<void> {
+  return invoke("vpn_set_auto_disconnect", { enabled });
+}
+
+export function vpnGetAutoDisconnect(): Promise<boolean> {
+  return invoke("vpn_get_auto_disconnect");
+}
+
+export function onVpnStatus(handler: (profiles: VpnProfile[]) => void): Promise<UnlistenFn> {
+  return listen<VpnProfile[]>("vpn-status", (event) => handler(event.payload));
+}
+
 export interface SessionOutput {
   id: string;
   /** chunk de bytes do PTY em base64 */

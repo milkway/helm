@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { importSshConfig } from "../lib/ipc";
 import { detachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
+import { useVpnStore } from "../stores/vpn";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
-import { statusColor, tmuxSessionName, type Host, type SessionInfo } from "../types";
+import { sessionUsesTmux, statusColor, tmuxSessionName, type Host, type SessionInfo } from "../types";
 
 interface Item {
   key: string;
@@ -44,6 +45,7 @@ export function CommandPalette() {
   const openSession = useSessionsStore((s) => s.open);
   const hosts = useHostsStore((s) => s.hosts);
   const loadHosts = useHostsStore((s) => s.load);
+  const toggleVpnPanel = useVpnStore((s) => s.togglePanel);
   const [query, setQuery] = useState("");
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -94,7 +96,7 @@ export function CommandPalette() {
           togglePalette(false);
         },
       });
-      if (activeSession) {
+      if (activeSession && sessionUsesTmux(activeSession, activeHost)) {
         list.push({
           key: "cmd-detach",
           section: "Comandos",
@@ -140,6 +142,16 @@ export function CommandPalette() {
       },
     });
     list.push({
+      key: "cmd-vpn",
+      section: "Comandos",
+      label: "VPNs — painel de conexões",
+      icon: "⛨",
+      run: () => {
+        togglePalette(false);
+        toggleVpnPanel(true);
+      },
+    });
+    list.push({
       key: "cmd-about",
       section: "Comandos",
       label: "Sobre o Helm",
@@ -147,7 +159,7 @@ export function CommandPalette() {
       run: () => openModal({ kind: "about" }),
     });
     return list;
-  }, [sessions, hosts, activeHost, activeSession, focus, openSession, openModal, togglePalette, loadHosts]);
+  }, [sessions, hosts, activeHost, activeSession, focus, openSession, openModal, togglePalette, loadHosts, toggleVpnPanel]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

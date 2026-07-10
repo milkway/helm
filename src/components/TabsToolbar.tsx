@@ -2,7 +2,7 @@ import { closeTab, detachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore, type GridCols } from "../stores/ui";
-import { statusColor, tmuxSessionName } from "../types";
+import { sessionUsesTmux, statusColor, tmuxSessionName } from "../types";
 
 const DENSITIES: GridCols[] = [2, 3, 4];
 
@@ -20,10 +20,7 @@ export function TabsToolbar() {
   const hostName = (hostId: string) => hosts.find((h) => h.id === hostId)?.name ?? hostId;
   const activeSession = sessions.find((s) => s.id === activeId);
   const activeHost = activeSession ? hosts.find((h) => h.id === activeSession.hostId) : undefined;
-  const activeUsesTmux =
-    activeSession?.params != null
-      ? activeSession.params.mode !== "shell"
-      : (activeHost?.autoAttach ?? false) || (activeHost && activeHost.startupMode !== "shell");
+  const activeUsesTmux = activeSession ? sessionUsesTmux(activeSession, activeHost) : false;
   const tmuxActive = activeSession?.status === "connected" && activeUsesTmux ? activeHost : undefined;
   const tmuxName = activeSession?.params?.sessionName
     ? tmuxSessionName(activeSession.params.sessionName)

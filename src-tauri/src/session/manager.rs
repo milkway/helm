@@ -276,8 +276,27 @@ fn manager_loop(
     params: Option<SessionParams>,
 ) {
     let auto_reconnect = host.as_ref().map(|h| h.auto_reconnect).unwrap_or(false);
+    let vpn_profile = host
+        .as_ref()
+        .and_then(|h| h.vpn_profile.clone())
+        .filter(|p| !p.is_empty());
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut attempt: u32 = 0;
+
+    // Host exige VPN → conecta antes do SSH (sequência do design 4a).
+    if let Some(profile) = &vpn_profile {
+        emit_status(&app, &id, "vpn", None, None);
+        if let Some(vpn) = app.try_state::<crate::vpn::Vpn>() {
+            if let Err(e) = crate::vpn::acquire(&app, &vpn, profile) {
+                eprintln!("[session {id}] VPN '{profile}' falhou: {e}");
+                emit_status(&app, &id, "error", Some(0), None);
+                if let Some(sessions) = app.try_state::<Sessions>() {
+                    sessions.0.lock().unwrap().remove(&id);
+                }
+                return;
+            }
+        }
+    }
 
     loop {
         if session.closed.load(Ordering::Relaxed) {
@@ -386,6 +405,13 @@ fn manager_loop(
         eprintln!("[session {id}] reconectando — tentativa {attempt}/{MAX_ATTEMPTS} em {delay}s");
         emit_status(&app, &id, "reconnecting", Some(attempt), Some(delay));
         interruptible_sleep(&session, delay);
+    }
+
+    // libera a VPN (refcount--; desconecta se foi o último host a usá-la)
+    if let Some(profile) = &vpn_profile {
+        if let Some(vpn) = app.try_state::<crate::vpn::Vpn>() {
+            crate::vpn::release(&app, &vpn, profile);
+        }
     }
 
     // remove do registro ao terminar de vez

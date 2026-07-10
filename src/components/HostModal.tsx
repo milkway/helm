@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { saveHost, testConnection, type TestResult } from "../lib/ipc";
+import { saveHost, testConnection, vpnList, type TestResult, type VpnProfile } from "../lib/ipc";
 import { useHostsStore } from "../stores/hosts";
 import { useUiStore } from "../stores/ui";
 import { useVaultStore } from "../stores/vault";
@@ -25,6 +25,12 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
   const [autoReconnect, setAutoReconnect] = useState(editing?.autoReconnect ?? true);
   const [autoInstallTmux, setAutoInstallTmux] = useState(editing?.autoInstallTmux ?? false);
   const [autoAttach, setAutoAttach] = useState(editing?.autoAttach ?? true);
+  const [vpnProfile, setVpnProfile] = useState<string | null>(editing?.vpnProfile ?? null);
+  const [vpnProfiles, setVpnProfiles] = useState<VpnProfile[]>([]);
+
+  useEffect(() => {
+    void vpnList().then(setVpnProfiles).catch(() => setVpnProfiles([]));
+  }, []);
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<TestResult | null>(null);
   const [saving, setSaving] = useState(false);
@@ -64,7 +70,7 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
       host: parsed.host,
       port: port ? Number(port) : null,
       credentialRef,
-      vpnProfile: editing?.vpnProfile ?? null,
+      vpnProfile,
       autoReconnect,
       autoInstallTmux,
       autoAttach,
@@ -176,6 +182,25 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
             <Toggle on={autoReconnect} onChange={setAutoReconnect} label="Reconectar automaticamente (backoff 1–30s)" />
             <Toggle on={autoInstallTmux} onChange={setAutoInstallTmux} label="Instalar tmux se não existir (via ssh -tt)" />
             <Toggle on={autoAttach} onChange={setAutoAttach} label="Re-atachar última sessão" />
+          </div>
+
+          <div>
+            <div className="hxm__label">VPN (opcional)</div>
+            <select
+              className="hxm__input hxm__select"
+              value={vpnProfile ?? ""}
+              onChange={(e) => setVpnProfile(e.target.value || null)}
+            >
+              <option value="">não requer VPN</option>
+              {vpnProfiles.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.name}
+                </option>
+              ))}
+              {vpnProfile && !vpnProfiles.some((p) => p.name === vpnProfile) && (
+                <option value={vpnProfile}>{vpnProfile}</option>
+              )}
+            </select>
           </div>
 
           <div className="hxm__test">
