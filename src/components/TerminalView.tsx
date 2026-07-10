@@ -1,21 +1,11 @@
-import { TERM_LINES } from "../mock";
+import { Term } from "./Term";
 
-// Fase 0: conteúdo estático transcrito do protótipo. Na Fase 1 este
-// componente passa a hospedar o xterm conectado ao PTY.
+// Fase 1: xterm vivo conectado a um PTY local (shell do sistema).
+// O toast de atenção segue como placeholder visual até a Fase 8.
 export function TerminalView() {
   return (
     <div className="term">
-      {TERM_LINES.map((line, i) => (
-        <div className="term__line" key={i} style={{ color: line.color }}>
-          {line.text}
-        </div>
-      ))}
-      <div className="term__prompt">
-        <span className="term__prompt-arrow">➜</span>
-        <span className="term__prompt-path">~/apps/atlas-api</span>
-        <span className="term__prompt-cmd">claude </span>
-        <span className="term__cursor" />
-      </div>
+      <Term sessionId="local" />
 
       <div className="attn-toast">
         <span className="attn-toast__dot" />
