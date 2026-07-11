@@ -4,9 +4,30 @@ Gerenciador desktop de terminais SSH (macOS + Linux) construído com Tauri 2 + R
 
 Sessões tmux persistentes por projeto, reconexão e re-attach automáticos, cofre de credenciais nativo (Keychain/Secret Service + Touch ID), integração VPN (Tunnelblick/nmcli) e quick-launch **clmux** — entra na pasta do projeto e abre o Claude dentro do tmux com um clique.
 
+## Interface
+
+| Modo terminal | Modo grid |
+|---|---|
+| ![Terminal](design_handoff_helm/screenshots/app-terminal.png) | ![Grid](design_handoff_helm/screenshots/app-grid.png) |
+
+| Vault (Touch ID) | Command palette (⌘K) | VPN |
+|---|---|---|
+| ![Vault](design_handoff_helm/screenshots/3c-vault.png) | ![⌘K](design_handoff_helm/screenshots/3b-command-palette.png) | ![VPN](design_handoff_helm/screenshots/4a-vpn.png) |
+
+## Recursos
+
+- **Sessões SSH persistentes** via OpenSSH do sistema (`ssh -tt`), herdando agent, `~/.ssh/config` e ProxyCommand.
+- **tmux por projeto** com auto-attach e **Detach** que preserva a sessão no servidor.
+- **Auto-reconnect** com backoff exponencial (1–30s, 5 tentativas) e tela de erro com retry automático.
+- **Modo grid** com terminais vivos, densidade 2×/3×/4× e captura (copiar saída / PNG).
+- **Vault** de credenciais no Keychain (macOS, com Touch ID) / Secret Service (Linux); só metadados no SQLite.
+- **Detecção de atenção**: destaca sessões aguardando input do usuário.
+- **⌘K command palette**, importação de `~/.ssh/config` e **clmux** (abre o Claude dentro do tmux).
+- **Integração VPN** (Tunnelblick no macOS, nmcli no Linux): conecta antes do SSH e desconecta quando o último host que a usa fecha.
+
 ## Status
 
-Em implementação. Veja o plano completo em [PLANO.md](PLANO.md).
+Primeiro release: **v0.1.0**. Instaladores `.dmg` e `.deb` em [Releases](https://github.com/milkway/helm/releases). Plano de implementação em [PLANO.md](PLANO.md).
 
 ## Design
 

@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+title: "Helm — Gerenciador de terminais SSH"
+message: "Se você usar este software, por favor cite-o usando estes metadados."
+type: software
+authors:
+  - given-names: "Sanny"
+    family-names: "Barbosa"
+    # orcid: "https://orcid.org/0000-0000-0000-0000"   # descomente e preencha se tiver
+repository-code: "https://github.com/milkway/helm"
+url: "https://github.com/milkway/helm"
+abstract: >-
+  Aplicativo desktop (macOS e Linux) para gerenciar conexões SSH persistentes:
+  sessões tmux nomeadas por projeto, reconexão e re-attach automáticos, cofre
+  de credenciais nativo (Keychain/Secret Service com Touch ID), modo grid,
+  detecção de sessões aguardando input, command palette, importação de
+  ~/.ssh/config e integração com VPN (Tunnelblick/nmcli). Construído com
+  Tauri 2, React 19 e xterm.js 6.
+keywords:
+  - ssh
+  - tmux
+  - terminal
+  - tauri
+  - desktop
+license: MIT
+version: 0.1.0
+date-released: "2026-07-11"
