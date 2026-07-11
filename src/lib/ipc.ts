@@ -1,4 +1,4 @@
-// Wrappers tipados dos commands/eventos Tauri (contratos do PLANO.md §1).
+// Wrappers tipados dos commands/eventos Tauri (IPC front ↔ Rust).
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { Host, SessionStatus } from "../types";

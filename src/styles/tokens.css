@@ -1,4 +1,4 @@
-/* Design tokens do handoff (design_handoff_helm/README.md · seção Design Tokens). */
+/* Design tokens do Helm (cores, tipografia, animações). */
 :root {
   /* Superfícies */
   --bg-app: #0b0d10;
