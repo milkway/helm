@@ -8,6 +8,11 @@ authors:
     # orcid: "https://orcid.org/0000-0000-0000-0000"   # descomente e preencha se tiver
 repository-code: "https://github.com/milkway/helm"
 url: "https://github.com/milkway/helm"
+doi: "10.5281/zenodo.21303523"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.21303523"
+    description: "DOI do release v0.1.0 (Zenodo)"
 abstract: >-
   Aplicativo desktop (macOS e Linux) para gerenciar conexões SSH persistentes:
   sessões tmux nomeadas por projeto, reconexão e re-attach automáticos, cofre

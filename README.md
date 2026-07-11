@@ -1,5 +1,9 @@
 # Helm
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21303523.svg)](https://doi.org/10.5281/zenodo.21303523)
+[![Release](https://img.shields.io/github/v/release/milkway/helm)](https://github.com/milkway/helm/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-e0a15e.svg)](LICENSE)
+
 Gerenciador desktop de terminais SSH (macOS + Linux) construído com Tauri 2 + React 19 + xterm.js 6.
 
 Sessões tmux persistentes por projeto, reconexão e re-attach automáticos, cofre de credenciais nativo (Keychain/Secret Service + Touch ID), integração VPN (Tunnelblick/nmcli) e quick-launch **clmux** — entra na pasta do projeto e abre o Claude dentro do tmux com um clique.
