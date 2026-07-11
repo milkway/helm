@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+/* ── Fontes embutidas (mesma identidade do app) ───────────────────────── */
+@font-face {
+  font-family: "Inter Tight";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./fonts/inter-tight-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter Tight";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./fonts/inter-tight-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+1E00-1EFF, U+2020,
+    U+20A0-20AB, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin.woff2") format("woff2");
+}
+
+/* ── Design tokens do Helm ────────────────────────────────────────────── */
+@theme {
+  --color-bg: #0b0d10;
+  --color-panel: #0e1014;
+  --color-card: #101317;
+  --color-ink: #e6e8ea;
+  --color-ink-2: #a2a8b0;
+  --color-muted: #7d848d;
+  --color-faint: #565c64;
+  --color-accent: #e0a15e;
+  --color-accent-2: #c9683f;
+  --color-accent-soft: #f0c99a;
+  --color-green: #63d29b;
+  --color-blue: #5aa9e0;
+  --color-red: #f0785a;
+
+  --font-display: "Inter Tight", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --animate-blink: blink 1.1s step-end infinite;
+  --animate-float: float 6s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+html {
+  scroll-behavior: smooth;
+}
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* fundo: malha de brilho âmbar + grade sutil */
+.bg-atmos {
+  background:
+    radial-gradient(60% 50% at 50% -5%, rgba(224, 161, 94, 0.14), transparent 70%),
+    radial-gradient(40% 40% at 85% 20%, rgba(90, 169, 224, 0.06), transparent 70%),
+    var(--color-bg);
+}
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(70% 60% at 50% 0%, #000 0%, transparent 80%);
+}
+
+/* revelação escalonada no load */
+[data-rise] {
+  opacity: 0;
+  animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+}
+
+.card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
+    var(--color-card);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.card:hover {
+  border-color: rgba(224, 161, 94, 0.35);
+}
+
+.glow-accent {
+  box-shadow: 0 0 0 1px rgba(224, 161, 94, 0.25), 0 20px 60px -20px rgba(224, 161, 94, 0.4);
+}
+
+::selection {
+  background: rgba(224, 161, 94, 0.3);
+}
+::-webkit-scrollbar { width: 10px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+}
