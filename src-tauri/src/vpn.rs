@@ -54,6 +54,28 @@ fn run_osascript(script: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// Roda um handler AppleScript passando o perfil como ARGUMENTO (argv), sem
+/// interpolar no código-fonte — imune a injeção de AppleScript. `{}` no corpo
+/// é substituído por `(item 1 of argv)`.
+#[cfg(target_os = "macos")]
+fn run_osascript_with_profile(body: &str, profile: &str) -> Result<String, String> {
+    let handler = format!(
+        "on run argv\n{}\nend run",
+        body.replace("{}", "(item 1 of argv)")
+    );
+    let out = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&handler)
+        .arg("--")
+        .arg(profile) // valor passa por argv, nunca pelo código
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 #[cfg(target_os = "macos")]
 fn backend_list() -> Result<Vec<(String, String)>, String> {
     let names = run_osascript("tell application \"Tunnelblick\" to get name of configurations")?;
@@ -72,30 +94,22 @@ fn backend_list() -> Result<Vec<(String, String)>, String> {
 #[cfg(target_os = "macos")]
 fn backend_state(profile: &str) -> Result<String, String> {
     // Tunnelblick: EXITING = desconectado; CONNECTED = conectado; resto = em progresso
-    let script = format!(
-        "tell application \"Tunnelblick\" to get state of first configuration whose name is \"{}\"",
-        profile.replace('"', "")
-    );
-    let raw = run_osascript(&script)?;
+    let raw = run_osascript_with_profile(
+        "tell application \"Tunnelblick\" to get state of first configuration whose name is {}",
+        profile,
+    )?;
     Ok(normalize_state(&raw))
 }
 
 #[cfg(target_os = "macos")]
 fn backend_connect(profile: &str) -> Result<(), String> {
-    run_osascript(&format!(
-        "tell application \"Tunnelblick\" to connect \"{}\"",
-        profile.replace('"', "")
-    ))
-    .map(|_| ())
+    run_osascript_with_profile("tell application \"Tunnelblick\" to connect {}", profile).map(|_| ())
 }
 
 #[cfg(target_os = "macos")]
 fn backend_disconnect(profile: &str) -> Result<(), String> {
-    run_osascript(&format!(
-        "tell application \"Tunnelblick\" to disconnect \"{}\"",
-        profile.replace('"', "")
-    ))
-    .map(|_| ())
+    run_osascript_with_profile("tell application \"Tunnelblick\" to disconnect {}", profile)
+        .map(|_| ())
 }
 
 #[cfg(target_os = "macos")]
