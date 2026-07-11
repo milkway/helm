@@ -12,11 +12,11 @@
 
 | Modo terminal | Modo grid |
 |---|---|
-| ![Terminal](assets/screenshots/app-terminal.png) | ![Grid](assets/screenshots/app-grid.png) |
+| ![Terminal](assets/screenshots/terminal.png) | ![Grid](assets/screenshots/grid.png) |
 
-| Vault (Touch ID) | Command palette (⌘K) | VPN |
+| Vault (Touch ID) | Add host | VPN |
 |---|---|---|
-| ![Vault](assets/screenshots/3c-vault.png) | ![⌘K](assets/screenshots/3b-command-palette.png) | ![VPN](assets/screenshots/4a-vpn.png) |
+| ![Vault](assets/screenshots/vault.png) | ![Add host](assets/screenshots/add-host.png) | ![VPN](assets/screenshots/vpn.png) |
 
 ## Recursos
 
