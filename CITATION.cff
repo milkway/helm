@@ -3,8 +3,8 @@ title: "Helm — Gerenciador de terminais SSH"
 message: "Se você usar este software, por favor cite-o usando estes metadados."
 type: software
 authors:
-  - given-names: "Sanny"
-    family-names: "Barbosa"
+  - given-names: "André"
+    family-names: "Leite"
     # orcid: "https://orcid.org/0000-0000-0000-0000"   # descomente e preencha se tiver
 repository-code: "https://github.com/milkway/helm"
 url: "https://github.com/milkway/helm"
