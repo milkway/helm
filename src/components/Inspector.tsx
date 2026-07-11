@@ -4,6 +4,7 @@ import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
 import { sessionUsesTmux, statusColor, tmuxSessionName } from "../types";
+import { useT } from "../i18n";
 
 function uptime(connectedAt: number | null): string {
   if (!connectedAt) return "—";
@@ -22,6 +23,7 @@ export function Inspector() {
   const open = useSessionsStore((s) => s.open);
   const hosts = useHostsStore((s) => s.hosts);
   const openModal = useUiStore((s) => s.openModal);
+  const t = useT();
 
   // rerender periódico para o uptime andar
   const [, setTick] = useState(0);
@@ -41,7 +43,7 @@ export function Inspector() {
             <span className="inspector__host-dot" style={{ background: "#565c64", boxShadow: "none" }} />
             <span className="inspector__host-name">—</span>
           </div>
-          <div className="inspector__host-addr">sem sessão ativa</div>
+          <div className="inspector__host-addr">{t("in.none")}</div>
         </div>
       </div>
     );
@@ -49,13 +51,13 @@ export function Inspector() {
 
   const color = statusColor(session.status);
   const meta: { k: string; v: string }[] = [
-    { k: "Host", v: host.host },
-    { k: "User", v: host.user ?? "config" },
-    { k: "Port", v: host.port ? String(host.port) : "config" },
-    { k: "Latency", v: "—" },
-    { k: "Uptime", v: uptime(session.connectedAt) },
-    { k: "Auto-reconnect", v: host.autoReconnect ? "on" : "off" },
-    { k: "Auto-attach", v: host.autoAttach ? "on" : "off" },
+    { k: t("in.host"), v: host.host },
+    { k: t("in.user"), v: host.user ?? t("in.config") },
+    { k: t("in.port"), v: host.port ? String(host.port) : t("in.config") },
+    { k: t("in.latency"), v: "—" },
+    { k: t("in.uptime"), v: uptime(session.connectedAt) },
+    { k: t("in.autoReconnect"), v: host.autoReconnect ? t("in.on") : t("in.off") },
+    { k: t("in.autoAttach"), v: host.autoAttach ? t("in.on") : t("in.off") },
   ];
 
   return (
@@ -74,7 +76,7 @@ export function Inspector() {
       </div>
 
       <div className="inspector__scroll">
-        <div className="inspector__section">Connection</div>
+        <div className="inspector__section">{t("in.connection")}</div>
         {meta.map((m) => (
           <div className="meta-row" key={m.k}>
             <span className="meta-row__k">{m.k}</span>
@@ -82,12 +84,12 @@ export function Inspector() {
           </div>
         ))}
 
-        <div className="inspector__section inspector__section--gap">Quick launch</div>
+        <div className="inspector__section inspector__section--gap">{t("in.quickLaunch")}</div>
         <div className="quick-list">
           <div
             className="clmux-card"
             style={{ cursor: "pointer" }}
-            title="Abrir o Claude dentro do tmux"
+            title="clmux"
             onClick={() =>
               open(host.id, {
                 mode: "clmux",
@@ -99,9 +101,7 @@ export function Inspector() {
             <div className="clmux-card__icon">cl</div>
             <div className="card-body">
               <div className="clmux-card__title">clmux → claude</div>
-              <div className="clmux-card__sub">
-                cd {host.projectDir ?? "~"} · tmux · claude
-              </div>
+              <div className="clmux-card__sub">{t("in.clmuxSub", { dir: host.projectDir ?? "~" })}</div>
             </div>
           </div>
           {(() => {
@@ -114,9 +114,9 @@ export function Inspector() {
               >
                 <div className="action-card__icon">⏏</div>
                 <div className="card-body">
-                  <div className="action-card__title">Detach session</div>
+                  <div className="action-card__title">{t("in.detach")}</div>
                   <div className="action-card__sub">
-                    {sessionUsesTmux(session, host) ? "keeps running on server" : "sessão sem tmux"}
+                    {sessionUsesTmux(session, host) ? t("in.detachOn") : t("in.detachOff")}
                   </div>
                 </div>
               </div>
@@ -129,27 +129,27 @@ export function Inspector() {
           >
             <div className="action-card__icon">⟳</div>
             <div className="card-body">
-              <div className="action-card__title">Install / attach tmux</div>
+              <div className="action-card__title">{t("in.installTmux")}</div>
               <div className="action-card__sub">ssh -tt · auto</div>
             </div>
           </div>
           <div
             className="action-card"
             style={{ cursor: "pointer" }}
-            title="Nova sessão shell na pasta do projeto"
+            title="shell"
             onClick={() =>
               open(host.id, { mode: "shell", projectDir: host.projectDir ?? undefined })
             }
           >
             <div className="action-card__icon">⌘</div>
             <div className="card-body">
-              <div className="action-card__title">Open project shell</div>
+              <div className="action-card__title">{t("in.openShell")}</div>
               <div className="action-card__sub">cd {host.projectDir ?? "~"}</div>
             </div>
           </div>
         </div>
 
-        <div className="inspector__section inspector__section--gap">Credential</div>
+        <div className="inspector__section inspector__section--gap">{t("in.credential")}</div>
         <div className="cred-card">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="1.8">
             <rect x="4" y="10" width="16" height="11" rx="2" />
@@ -157,7 +157,7 @@ export function Inspector() {
           </svg>
           <div className="card-body">
             <div className="cred-card__title">{host.credentialRef ?? "ssh-agent / config"}</div>
-            <div className="cred-card__sub">via OpenSSH do sistema</div>
+            <div className="cred-card__sub">{t("in.credSub")}</div>
           </div>
           <span className="cred-card__mask">••••</span>
         </div>

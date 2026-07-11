@@ -4,6 +4,7 @@ import { useHostsStore } from "../stores/hosts";
 import { useUiStore } from "../stores/ui";
 import { useVaultStore } from "../stores/vault";
 import { PasswordField } from "./fields";
+import { useT } from "../i18n";
 
 const INSTALL_PREVIEW: Record<string, string> = {
   "apt-get": "sudo apt-get install -y tmux",
@@ -16,6 +17,7 @@ const INSTALL_PREVIEW: Record<string, string> = {
 
 /** Instalar tmux com sudo — design 2a. */
 export function InstallTmuxModal({ hostId }: { hostId: string }) {
+  const t = useT();
   const closeModal = useUiStore((s) => s.closeModal);
   const hosts = useHostsStore((s) => s.hosts);
   const loadHosts = useHostsStore((s) => s.load);
@@ -72,7 +74,7 @@ export function InstallTmuxModal({ hostId }: { hostId: string }) {
       source === "vault" ? { credentialId: effectiveCred! } : { password },
     )
       .then(async (version) => {
-        setResult({ ok: true, msg: `✓ ${version} instalado` });
+        setResult({ ok: true, msg: t("it.installed", { v: version }) });
         // com tmux disponível, liga o re-attach automático do host
         if (host && !host.autoAttach) {
           await saveHost({ ...host, autoAttach: true });
@@ -95,10 +97,10 @@ export function InstallTmuxModal({ hostId }: { hostId: string }) {
           </div>
           <div className="hxm__titles">
             <div className="hxm__title">
-              Instalar tmux em <span className="hxm__title-host">{host?.name ?? hostId}</span>
+              {t("it.title", { host: "" })}<span className="hxm__title-host">{host?.name ?? hostId}</span>
             </div>
             <div className="hxm__sub">
-              {info?.tmux ? `${info.tmux} já está instalado` : "tmux não encontrado neste host"}
+              {info?.tmux ? t("it.already", { v: info.tmux }) : t("it.notFound")}
             </div>
           </div>
           <span className="hxm__close" onClick={closeModal}>×</span>
@@ -114,17 +116,17 @@ export function InstallTmuxModal({ hostId }: { hostId: string }) {
               <span style={{ color: "#f0785a" }}>{detectErr}</span>
             ) : info ? (
               <>
-                Detectado: <span className="hxm__detect-val">{info.os ?? "?"} · {info.pkgManager ?? "sem package manager"}</span>
+                {t("it.detected")} <span className="hxm__detect-val">{info.os ?? "?"} · {info.pkgManager ?? t("it.noPm")}</span>
               </>
             ) : (
-              "Detectando ambiente remoto…"
+              t("it.detecting")
             )}
             <div className="hxm__spacer" />
             <span className="hxm__badge hxm__badge--green">ssh -tt</span>
           </div>
 
           <div>
-            <div className="hxm__label">Comando</div>
+            <div className="hxm__label">{t("it.command")}</div>
             <div className="hxm__cmd">
               <span className="hxm__cmd-prompt">$</span>{" "}
               {info?.pkgManager ? INSTALL_PREVIEW[info.pkgManager] : "…"}
@@ -132,7 +134,7 @@ export function InstallTmuxModal({ hostId }: { hostId: string }) {
           </div>
 
           <div>
-            <div className="hxm__label">Senha do sudo</div>
+            <div className="hxm__label">{t("it.sudoPwd")}</div>
             <div className="hxm__radios">
               <div
                 className={`hxm__radio${source === "vault" ? " hxm__radio--on hxm__radio--clmux" : ""}`}
@@ -140,14 +142,14 @@ export function InstallTmuxModal({ hostId }: { hostId: string }) {
               >
                 <span className={`hxm__radio-dot${source === "vault" ? " hxm__radio-dot--on" : ""}`} />
                 <div className="hxm__radio-body">
-                  <div className="hxm__radio-title">Usar senha do Vault</div>
+                  <div className="hxm__radio-title">{t("it.useVault")}</div>
                   <div className="hxm__radio-sub">
                     {vault.busy ? (
-                      "destravando o Vault…"
+                      t("it.unlocking")
                     ) : vault.locked ? (
-                      "Vault bloqueado"
+                      t("it.vaultLocked")
                     ) : sudoCreds.length === 0 ? (
-                      "nenhuma credencial de sudo no Vault"
+                      t("it.noSudoCred")
                     ) : (
                       <select
                         className="hxm__inline-select"
@@ -179,12 +181,12 @@ export function InstallTmuxModal({ hostId }: { hostId: string }) {
               >
                 <span className={`hxm__radio-dot${source === "typed" ? " hxm__radio-dot--on" : ""}`} />
                 <div className="hxm__radio-body">
-                  <div className="hxm__radio-title">Digitar agora</div>
-                  <div className="hxm__radio-sub">usada uma vez · não será salva</div>
+                  <div className="hxm__radio-title">{t("it.typeNow")}</div>
+                  <div className="hxm__radio-sub">{t("it.typeNowSub")}</div>
                 </div>
                 {source === "typed" && (
                   <div style={{ width: 190 }} onClick={(e) => e.stopPropagation()}>
-                    <PasswordField value={password} onChange={setPassword} placeholder="senha do sudo" autoFocus />
+                    <PasswordField value={password} onChange={setPassword} placeholder={t("it.pwdPh")} autoFocus />
                   </div>
                 )}
               </div>
@@ -196,11 +198,7 @@ export function InstallTmuxModal({ hostId }: { hostId: string }) {
               <rect x="4" y="10" width="16" height="11" rx="2" />
               <path d="M8 10V7a4 4 0 0 1 8 0v3" />
             </svg>
-            <div>
-              A senha é enviada por <span className="hxm__mono">stdin</span> ao{" "}
-              <span className="hxm__mono">sudo -S</span> dentro do canal SSH — nunca aparece em
-              argumentos, history ou logs.
-            </div>
+            <div>{t("it.note")}</div>
           </div>
 
           {result && (
@@ -212,11 +210,11 @@ export function InstallTmuxModal({ hostId }: { hostId: string }) {
 
         <div className="hxm__footer">
           <div className="hxm__btn hxm__btn--ghost" onClick={closeModal}>
-            {result?.ok ? "Fechar" : "Agora não"}
+            {result?.ok ? t("it.close") : t("it.later")}
           </div>
           {!result?.ok && (
             <div className={`hxm__btn hxm__btn--primary${canInstall ? "" : " hxm__btn--off"}`} onClick={install}>
-              {busy ? "Instalando…" : "Autorizar e instalar"}
+              {busy ? t("it.installing") : t("it.install")}
             </div>
           )}
         </div>

@@ -1,8 +1,10 @@
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
+import { useT } from "../i18n";
 import { hostAddr } from "../types";
 
 export function StatusBar() {
+  const t = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
   const hosts = useHostsStore((s) => s.hosts);
@@ -13,15 +15,14 @@ export function StatusBar() {
   if (!session || !host) {
     return (
       <div className="statusbar">
-        <span className="statusbar__dim">sem sessão ativa</span>
+        <span className="statusbar__dim">{t("st.none")}</span>
         <div className="statusbar__spacer" />
         <span className="statusbar__dim">utf-8</span>
       </div>
     );
   }
 
-  const stColor =
-    session.status === "connected" ? "statusbar__ssh" : "statusbar__dim";
+  const stColor = session.status === "connected" ? "statusbar__ssh" : "statusbar__dim";
 
   return (
     <div className="statusbar">
@@ -32,11 +33,10 @@ export function StatusBar() {
       <span className="statusbar__dim">{session.status}</span>
       <span className="statusbar__sep">·</span>
       <span className="statusbar__mid">
-        reconnect: {host.autoReconnect ? "auto" : "off"} · attach:{" "}
-        {host.autoAttach ? "auto" : "off"}
+        {t("st.reconnect", { r: host.autoReconnect ? "auto" : "off", a: host.autoAttach ? "auto" : "off" })}
       </span>
       <div className="statusbar__spacer" />
-      <span className="statusbar__accent">clmux ready</span>
+      <span className="statusbar__accent">{t("st.clmux")}</span>
       <span className="statusbar__sep">·</span>
       <span className="statusbar__dim">utf-8</span>
     </div>

@@ -24,9 +24,9 @@
           <span class="text-[15px] font-semibold tracking-tight">Helm</span>
         </a>
         <div class="ml-auto hidden items-center gap-7 text-sm text-(--color-ink-2) md:flex">
-          <a href="#recursos" class="transition hover:text-(--color-ink)">Recursos</a>
-          <a href="#telas" class="transition hover:text-(--color-ink)">Telas</a>
-          <a href="#download" class="transition hover:text-(--color-ink)">Instalar</a>
+          <a href="#recursos" class="transition hover:text-(--color-ink)" data-i18n="nav.features">Recursos</a>
+          <a href="#telas" class="transition hover:text-(--color-ink)" data-i18n="nav.screens">Telas</a>
+          <a href="#download" class="transition hover:text-(--color-ink)" data-i18n="nav.install">Instalar</a>
           <a
             href="https://github.com/milkway/helm"
             class="transition hover:text-(--color-ink)"
@@ -35,9 +35,16 @@
             >GitHub</a
           >
         </div>
+        <div class="lang-sel relative">
+          <button id="lang-btn" class="flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-sm text-(--color-ink-2) transition hover:text-(--color-ink)">
+            <span id="lang-flag">🇬🇧</span><span id="lang-code" class="font-mono text-xs">EN</span>
+          </button>
+          <div id="lang-menu" class="absolute right-0 top-11 z-30 hidden min-w-[150px] rounded-xl border border-white/10 bg-(--color-panel) p-1.5 shadow-2xl"></div>
+        </div>
         <a
           href="#download"
-          class="ml-auto rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-semibold text-[#1a0f08] transition hover:bg-(--color-accent-soft) md:ml-0"
+          class="rounded-lg bg-(--color-accent) px-4 py-2 text-sm font-semibold text-[#1a0f08] transition hover:bg-(--color-accent-soft)"
+          data-i18n="nav.download"
           >Baixar</a
         >
       </nav>
@@ -55,7 +62,7 @@
           class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5 font-mono text-xs text-(--color-ink-2) transition hover:border-(--color-accent)/40"
         >
           <span class="inline-block h-1.5 w-1.5 rounded-full bg-(--color-green) shadow-[0_0_8px] shadow-(--color-green)"></span>
-          v0.1.0 · DOI 10.5281/zenodo.21303523
+          <span data-i18n="hero.badge">v0.1.0 · DOI 10.5281/zenodo.21303523</span>
         </a>
 
         <h1
@@ -63,9 +70,9 @@
           style="animation-delay: 0.12s"
           class="mx-auto mt-8 max-w-3xl text-5xl font-semibold leading-[1.05] tracking-tight sm:text-7xl"
         >
-          Suas sessões SSH,<br />
+          <span data-i18n="hero.title1">Suas sessões SSH,</span><br />
           <span class="bg-gradient-to-br from-(--color-accent-soft) to-(--color-accent-2) bg-clip-text text-transparent">
-            sempre no leme.
+            <span data-i18n="hero.title2">sempre no leme.</span>
           </span>
         </h1>
 
@@ -74,9 +81,7 @@
           style="animation-delay: 0.2s"
           class="mx-auto mt-6 max-w-xl text-lg text-(--color-ink-2)"
         >
-          Terminais SSH persistentes com tmux por projeto, reconexão automática, cofre
-          com Touch&nbsp;ID e VPN. Um app desktop nativo para
-          <span class="text-(--color-ink)">macOS e Linux</span>.
+          <span data-i18n="hero.sub">Terminais SSH persistentes com tmux por projeto, reconexão automática, cofre com Touch ID e VPN. Um app desktop nativo para macOS e Linux.</span>
         </p>
 
         <div
@@ -87,6 +92,7 @@
           <a
             href="#download"
             class="glow-accent rounded-xl bg-(--color-accent) px-6 py-3.5 font-semibold text-[#1a0f08] transition hover:bg-(--color-accent-soft)"
+            data-i18n="hero.download"
             >Baixar para macOS &amp; Linux</a
           >
           <a
@@ -94,12 +100,13 @@
             target="_blank"
             rel="noopener"
             class="rounded-xl border border-white/12 px-6 py-3.5 font-medium text-(--color-ink) transition hover:bg-white/[0.04]"
+            data-i18n="hero.github"
             >Ver no GitHub →</a
           >
         </div>
 
         <p data-rise style="animation-delay: 0.34s" class="mt-4 font-mono text-xs text-(--color-faint)">
-          Open source · MIT · Tauri 2 + React 19 + xterm.js 6
+          <span data-i18n="hero.oss">Open source · MIT · Tauri 2 + React 19 + xterm.js 6</span>
         </p>
 
         <!-- Janela-terminal -->
@@ -141,9 +148,9 @@
       <!-- ── Recursos ─────────────────────────────────────────────────── -->
       <section id="recursos" class="mx-auto max-w-6xl px-6 py-20">
         <div class="mb-14 text-center">
-          <p class="font-mono text-xs uppercase tracking-[0.2em] text-(--color-accent)">Recursos</p>
+          <p class="font-mono text-xs uppercase tracking-[0.2em] text-(--color-accent)" data-i18n="feat.kicker">Recursos</p>
           <h2 class="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
-            Feito para quem vive no terminal
+            <span data-i18n="feat.title">Feito para quem vive no terminal</span>
           </h2>
         </div>
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" id="feature-grid">
@@ -154,8 +161,8 @@
       <!-- ── Telas ────────────────────────────────────────────────────── -->
       <section id="telas" class="mx-auto max-w-6xl px-6 py-20">
         <div class="mb-14 text-center">
-          <p class="font-mono text-xs uppercase tracking-[0.2em] text-(--color-accent)">Interface</p>
-          <h2 class="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">Pixel-perfect, do terminal ao cofre</h2>
+          <p class="font-mono text-xs uppercase tracking-[0.2em] text-(--color-accent)" data-i18n="screens.kicker">Interface</p>
+          <h2 class="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl" data-i18n="screens.title">Pixel-perfect, do terminal ao cofre</h2>
         </div>
         <div class="overflow-hidden rounded-2xl border border-white/8 bg-(--color-panel) shadow-2xl">
           <img src="/shots/app-terminal.png" alt="Modo terminal do Helm" class="w-full" loading="lazy" />
@@ -179,10 +186,10 @@
       <!-- ── Download / instalação ────────────────────────────────────── -->
       <section id="download" class="mx-auto max-w-6xl px-6 py-20">
         <div class="mb-14 text-center">
-          <p class="font-mono text-xs uppercase tracking-[0.2em] text-(--color-accent)">Instalar</p>
-          <h2 class="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">Baixe o instalador</h2>
+          <p class="font-mono text-xs uppercase tracking-[0.2em] text-(--color-accent)" data-i18n="dl.kicker">Instalar</p>
+          <h2 class="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl" data-i18n="dl.title">Baixe o instalador</h2>
           <p class="mx-auto mt-3 max-w-lg text-(--color-ink-2)">
-            Binários assinados gerados pelo CI. Escolha sua plataforma.
+            <span data-i18n="dl.sub">Binários assinados gerados pelo CI. Escolha sua plataforma.</span>
           </p>
         </div>
         <div class="grid gap-4 md:grid-cols-3">
@@ -194,9 +201,9 @@
             <div class="flex items-center gap-2 font-mono text-xs text-(--color-muted)">
               <span class="h-1.5 w-1.5 rounded-full bg-(--color-green)"></span> .dmg
             </div>
-            <h3 class="mt-4 text-lg font-semibold">macOS · Apple Silicon</h3>
-            <p class="mt-1 text-sm text-(--color-ink-2)">M1/M2/M3 (aarch64)</p>
-            <span class="mt-6 font-mono text-sm text-(--color-accent) transition group-hover:text-(--color-accent-soft)">Baixar .dmg ↓</span>
+            <h3 class="mt-4 text-lg font-semibold" data-i18n="dl.macArm">macOS · Apple Silicon</h3>
+            <p class="mt-1 text-sm text-(--color-ink-2)" data-i18n="dl.macArmSub">M1/M2/M3 (aarch64)</p>
+            <span class="mt-6 font-mono text-sm text-(--color-accent) transition group-hover:text-(--color-accent-soft)" data-i18n="dl.getDmg">Baixar .dmg ↓</span>
           </a>
           <!-- macOS Intel -->
           <a
@@ -206,9 +213,9 @@
             <div class="flex items-center gap-2 font-mono text-xs text-(--color-muted)">
               <span class="h-1.5 w-1.5 rounded-full bg-(--color-green)"></span> .dmg
             </div>
-            <h3 class="mt-4 text-lg font-semibold">macOS · Intel</h3>
-            <p class="mt-1 text-sm text-(--color-ink-2)">x86_64</p>
-            <span class="mt-6 font-mono text-sm text-(--color-accent) transition group-hover:text-(--color-accent-soft)">Baixar .dmg ↓</span>
+            <h3 class="mt-4 text-lg font-semibold" data-i18n="dl.macIntel">macOS · Intel</h3>
+            <p class="mt-1 text-sm text-(--color-ink-2)" data-i18n="dl.macIntelSub">x86_64</p>
+            <span class="mt-6 font-mono text-sm text-(--color-accent) transition group-hover:text-(--color-accent-soft)" data-i18n="dl.getDmg">Baixar .dmg ↓</span>
           </a>
           <!-- Linux -->
           <a
@@ -218,15 +225,15 @@
             <div class="flex items-center gap-2 font-mono text-xs text-(--color-muted)">
               <span class="h-1.5 w-1.5 rounded-full bg-(--color-blue)"></span> .deb
             </div>
-            <h3 class="mt-4 text-lg font-semibold">Linux · Debian/Ubuntu</h3>
-            <p class="mt-1 text-sm text-(--color-ink-2)">amd64 (Ubuntu 22.04+)</p>
-            <span class="mt-6 font-mono text-sm text-(--color-accent) transition group-hover:text-(--color-accent-soft)">Baixar .deb ↓</span>
+            <h3 class="mt-4 text-lg font-semibold" data-i18n="dl.linux">Linux · Debian/Ubuntu</h3>
+            <p class="mt-1 text-sm text-(--color-ink-2)" data-i18n="dl.linuxSub">amd64 (Ubuntu 22.04+)</p>
+            <span class="mt-6 font-mono text-sm text-(--color-accent) transition group-hover:text-(--color-accent-soft)" data-i18n="dl.getDeb">Baixar .deb ↓</span>
           </a>
         </div>
 
         <!-- build from source -->
         <div class="card mt-4 rounded-2xl p-6">
-          <p class="text-sm text-(--color-ink-2)">Ou compile do código:</p>
+          <p class="text-sm text-(--color-ink-2)" data-i18n="dl.source">Ou compile do código:</p>
           <div class="mt-3 flex items-center justify-between gap-4 rounded-lg border border-white/8 bg-[#0a0c0f] px-4 py-3">
             <code class="font-mono text-sm text-(--color-ink)"
               ><span class="text-(--color-green)">$</span> git clone https://github.com/milkway/helm &amp;&amp; cd helm &amp;&amp; npm install &amp;&amp; npm run tauri build</code
@@ -234,6 +241,7 @@
             <button
               data-copy="git clone https://github.com/milkway/helm && cd helm && npm install && npm run tauri build"
               class="shrink-0 rounded-md border border-white/10 px-3 py-1.5 font-mono text-xs text-(--color-muted) transition hover:border-(--color-accent)/40 hover:text-(--color-accent)"
+            data-i18n="dl.copy"
             >
               copiar
             </button>
@@ -247,7 +255,7 @@
       <div class="mx-auto flex max-w-6xl flex-col items-center gap-4 px-6 py-12 text-center">
         <img src="/helm-logo.svg" alt="Helm" class="h-9 w-9 animate-float" />
         <p class="max-w-md text-sm text-(--color-ink-2)">
-          Helm · Gerenciador de terminais SSH · construído com Tauri, React e xterm.js
+          <span data-i18n="foot.tagline">Helm · Gerenciador de terminais SSH · construído com Tauri, React e xterm.js</span>
         </p>
         <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 font-mono text-xs text-(--color-muted)">
           <a href="https://github.com/milkway/helm" target="_blank" rel="noopener" class="hover:text-(--color-ink)">GitHub</a>

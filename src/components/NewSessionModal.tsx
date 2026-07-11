@@ -3,11 +3,13 @@ import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
 import { statusColor, tmuxSessionName } from "../types";
+import { useT } from "../i18n";
 
 type Mode = "shell" | "tmux" | "clmux";
 
 /** Nova sessão (projeto) — design 1c. */
 export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
+  const t = useT();
   const closeModal = useUiStore((s) => s.closeModal);
   const hosts = useHostsStore((s) => s.hosts);
   const sessions = useSessionsStore((s) => s.sessions);
@@ -25,16 +27,16 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
 
   const modes = useMemo(
     () => [
-      { id: "shell" as Mode, title: "Shell simples", sub: "ssh · sem tmux" },
-      { id: "tmux" as Mode, title: "tmux", sub: `tmux new -As ${sessionName}` },
+      { id: "shell" as Mode, title: t("ns.shell"), sub: t("ns.shellSub") },
+      { id: "tmux" as Mode, title: t("ns.tmux"), sub: `tmux new -As ${sessionName}` },
       {
         id: "clmux" as Mode,
-        title: "clmux",
+        title: t("ns.clmux"),
         sub: `cd ${dir.trim() || "~"} · tmux · claude`,
-        badge: "PADRÃO",
+        badge: t("ns.default"),
       },
     ],
-    [sessionName, dir],
+    [t, sessionName, dir],
   );
 
   const submit = () => {
@@ -53,15 +55,15 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
         <div className="hxm__header">
           <div className="hxm__icon hxm__icon--mono">$</div>
           <div className="hxm__titles">
-            <div className="hxm__title">Nova sessão</div>
-            <div className="hxm__sub">O nome do projeto vira o nome da sessão tmux</div>
+            <div className="hxm__title">{t("ns.title")}</div>
+            <div className="hxm__sub">{t("ns.sub")}</div>
           </div>
           <span className="hxm__close" onClick={closeModal}>×</span>
         </div>
 
         <div className="hxm__body">
           <div>
-            <div className="hxm__label">Host</div>
+            <div className="hxm__label">{t("ns.host")}</div>
             <div className="hxm__host-pick">
               <span
                 className="hxm__host-dot"
@@ -83,7 +85,7 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
 
           <div className="hxm__grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
             <div>
-              <div className="hxm__label">Projeto / sessão</div>
+              <div className="hxm__label">{t("ns.project")}</div>
               <input
                 className="hxm__input hxm__input--mono"
                 value={project}
@@ -93,7 +95,7 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
               />
             </div>
             <div>
-              <div className="hxm__label">Pasta do projeto</div>
+              <div className="hxm__label">{t("ns.folder")}</div>
               <input
                 className="hxm__input hxm__input--mono"
                 value={dir}
@@ -104,7 +106,7 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
           </div>
 
           <div>
-            <div className="hxm__label">Ao conectar</div>
+            <div className="hxm__label">{t("ns.onConnect")}</div>
             <div className="hxm__radios">
               {modes.map((m) => {
                 const on = mode === m.id;
@@ -128,9 +130,9 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
         </div>
 
         <div className="hxm__footer">
-          <div className="hxm__btn hxm__btn--ghost" onClick={closeModal}>Cancelar</div>
+          <div className="hxm__btn hxm__btn--ghost" onClick={closeModal}>{t("hm.cancel")}</div>
           <div className={`hxm__btn hxm__btn--primary${valid ? "" : " hxm__btn--off"}`} onClick={submit}>
-            Abrir sessão
+            {t("ns.open")}
           </div>
         </div>
       </div>

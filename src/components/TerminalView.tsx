@@ -5,6 +5,7 @@ import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
 import { hostAddr, type Host, type SessionInfo } from "../types";
+import { useT } from "../i18n";
 import { TermHost } from "./TermHost";
 
 function ConnectingOverlay({
@@ -18,14 +19,14 @@ function ConnectingOverlay({
   vpn: boolean;
   attempt: number | null;
 }) {
+  const t = useT();
+  const addr = host ? (host.user ? `${host.user}@${host.host}` : host.host) : "";
   const title = vpn
-    ? `Conectando VPN "${host?.vpnProfile ?? ""}"…`
+    ? t("ov.vpn", { profile: host?.vpnProfile ?? "" })
     : reconnect
-      ? `Reconectando — tentativa ${attempt ?? 1}/5`
-      : `Conectando a ${host?.name ?? "host"}…`;
-  const sub = vpn
-    ? "este host requer VPN · antes do SSH"
-    : `ssh ${host ? (host.user ? `${host.user}@${host.host}` : host.host) : ""}`;
+      ? t("ov.reconnecting", { n: attempt ?? 1 })
+      : t("ov.connecting", { host: host?.name ?? "host" });
+  const sub = vpn ? t("ov.vpnSub") : t("ov.connSub", { addr });
   return (
     <div className="connect-overlay">
       <span className="connect-overlay__spinner" />
@@ -39,6 +40,7 @@ function ConnectingOverlay({
 
 /** Tela de erro pós-falha — design 3d. */
 function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) {
+  const t = useT();
   const openModal = useUiStore((s) => s.openModal);
   const retryNow = () => {
     if (session.ptyId) {
@@ -56,10 +58,10 @@ function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) 
           <div className="error-card__badge">!</div>
           <div className="error-card__titles">
             <div className="error-card__title">
-              Reconexão falhou — {host?.name ?? session.hostId}
+              {t("err.title", { host: host?.name ?? session.hostId })}
             </div>
             <div className="error-card__sub">
-              5 tentativas · {host ? hostAddr(host) : ""}
+              {t("err.sub", { addr: host ? hostAddr(host) : "" })}
             </div>
           </div>
         </div>
@@ -70,23 +72,20 @@ function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) 
             </div>
           ))}
         </div>
-        <div className="error-card__note">
-          Sua sessão tmux continua rodando no servidor. Ao reconectar, o Helm re-atacha
-          automaticamente.
-        </div>
+        <div className="error-card__note">{t("err.note")}</div>
         <div className="error-card__actions">
           <div className="error-card__btn error-card__btn--primary" onClick={retryNow}>
-            Tentar agora
+            {t("err.retryNow")}
           </div>
           <div
             className="error-card__btn error-card__btn--secondary"
             onClick={() => host && openModal({ kind: "editHost", hostId: host.id })}
           >
-            Editar host
+            {t("err.editHost")}
           </div>
-          <div className="error-card__btn error-card__btn--ghost">Ver log completo</div>
+          <div className="error-card__btn error-card__btn--ghost">{t("err.viewLog")}</div>
           <div className="error-card__spacer" />
-          <div className="error-card__auto">retry auto: 60s</div>
+          <div className="error-card__auto">{t("err.autoRetry")}</div>
         </div>
       </div>
     </div>
@@ -94,6 +93,7 @@ function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) 
 }
 
 function DetachedOverlay({ session, host }: { session: SessionInfo; host?: Host }) {
+  const t = useT();
   const [clicked, setClicked] = useState(false);
   return (
     <div className="error-overlay">
@@ -102,9 +102,9 @@ function DetachedOverlay({ session, host }: { session: SessionInfo; host?: Host 
           <div className="error-card__badge error-card__badge--amber">⏏</div>
           <div className="error-card__titles">
             <div className="error-card__title error-card__title--amber">
-              Sessão detachada — {host?.name ?? session.hostId}
+              {t("det.title", { host: host?.name ?? session.hostId })}
             </div>
-            <div className="error-card__sub">tmux segue rodando no servidor</div>
+            <div className="error-card__sub">{t("det.sub")}</div>
           </div>
         </div>
         <div className="error-card__actions">
@@ -117,7 +117,7 @@ function DetachedOverlay({ session, host }: { session: SessionInfo; host?: Host 
               reattachTab(session.id);
             }}
           >
-            {clicked ? "Re-atachando…" : "Re-atachar"}
+            {clicked ? "…" : t("det.reattach")}
           </button>
         </div>
       </div>
@@ -128,6 +128,7 @@ function DetachedOverlay({ session, host }: { session: SessionInfo; host?: Host 
 // Uma pane por sessão aberta, todas montadas (o xterm mantém buffer e estado);
 // as inativas ficam com visibility:hidden para preservar as dimensões.
 export function TerminalView() {
+  const t = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
   const hosts = useHostsStore((s) => s.hosts);
@@ -135,7 +136,7 @@ export function TerminalView() {
   if (sessions.length === 0) {
     return (
       <div className="term term--empty">
-        <span className="term__hint">Selecione um host na sidebar para abrir uma sessão</span>
+        <span className="term__hint">{t("term.pick")}</span>
       </div>
     );
   }
@@ -179,6 +180,7 @@ export function TerminalView() {
 /** Toast de atenção no canto inferior direito, para a 1ª sessão em atenção
  * que não seja a ativa. "Jump →" foca a sessão. */
 function AttentionToast() {
+  const t = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
   const focus = useSessionsStore((s) => s.focus);
@@ -192,11 +194,11 @@ function AttentionToast() {
     <div className="attn-toast">
       <span className="attn-toast__dot" />
       <div>
-        <div className="attn-toast__title">{host?.name ?? target.hostId} waiting</div>
-        <div className="attn-toast__sub">aguardando input do usuário</div>
+        <div className="attn-toast__title">{t("attn.waiting", { host: host?.name ?? target.hostId })}</div>
+        <div className="attn-toast__sub">{t("attn.sub")}</div>
       </div>
       <div className="attn-toast__jump" onClick={() => focus(target.id)}>
-        Jump →
+        {t("attn.jump")}
       </div>
     </div>
   );

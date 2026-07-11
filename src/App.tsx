@@ -18,6 +18,7 @@ import { detachTab } from "./lib/termRegistry";
 import { useHostsStore } from "./stores/hosts";
 import { useSessionsStore } from "./stores/sessions";
 import { useUiStore } from "./stores/ui";
+import { useLangStore } from "./i18n";
 import { sessionUsesTmux } from "./types";
 
 export default function App() {
@@ -25,12 +26,14 @@ export default function App() {
   const modal = useUiStore((s) => s.modal);
   const loadPrefs = useUiStore((s) => s.loadPrefs);
   const togglePalette = useUiStore((s) => s.togglePalette);
+  const loadLang = useLangStore((s) => s.load);
   const hosts = useHostsStore((s) => s.hosts);
   const hostsLoaded = useHostsStore((s) => s.loaded);
 
   useEffect(() => {
     void loadPrefs();
-  }, [loadPrefs]);
+    void loadLang();
+  }, [loadPrefs, loadLang]);
 
   // atalhos globais: ⌘K abre a palette, ⌘D destacha a sessão ativa
   useEffect(() => {

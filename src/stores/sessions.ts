@@ -1,28 +1,31 @@
 import { create } from "zustand";
 import type { SessionParams } from "../lib/ipc";
 import type { SessionInfo, SessionStatus } from "../types";
+import { translate } from "../i18n";
+import { useLangStore } from "../i18n/lang";
 
 function timestamp(): string {
   return new Date().toLocaleTimeString("pt-BR", { hour12: false });
 }
 
 function logLine(status: SessionStatus, attempt: number | null, delaySecs: number | null): string {
-  const t = timestamp();
+  const ts = timestamp();
+  const lang = useLangStore.getState().lang;
+  const tr = (k: string, v?: Record<string, string | number>) => translate(lang, k, v);
   switch (status) {
     case "vpn":
-      return `${t} conectando VPN…`;
     case "connecting":
-      return `${t} conectando…`;
+      return `${ts} ${tr("log.connecting")}`;
     case "connected":
-      return `${t} conectado`;
+      return `${ts} ${tr("log.connected")}`;
     case "reconnecting":
-      return `${t} retry ${attempt}/5 · reconectando em ${delaySecs}s`;
+      return `${ts} ${tr("log.reconnecting", { n: attempt ?? 1, d: delaySecs ?? 0 })}`;
     case "error":
-      return `${t} giving up · session preserved on server (tmux)`;
+      return `${ts} ${tr("log.error")}`;
     case "detached":
-      return `${t} detached · tmux segue no servidor`;
+      return `${ts} ${tr("log.detached")}`;
     default:
-      return `${t} sessão encerrada`;
+      return `${ts} ${tr("log.exited")}`;
   }
 }
 

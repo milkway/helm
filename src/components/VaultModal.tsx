@@ -1,20 +1,22 @@
 import { useState } from "react";
 import { useVaultStore, type CredMeta } from "../stores/vault";
 import { PasswordField, Toggle } from "./fields";
+import { useT } from "../i18n";
 
-function relativeTime(iso: string | null): string {
-  if (!iso) return "nunca usada";
+function relativeTime(iso: string | null, t: (k: string, v?: Record<string, string | number>) => string): string {
+  if (!iso) return t("time.never");
   const then = new Date(iso + "Z").getTime();
   const mins = Math.floor((Date.now() - then) / 60_000);
-  if (mins < 1) return "usada agora";
-  if (mins < 60) return `usada há ${mins} min`;
+  if (mins < 1) return t("time.now");
+  if (mins < 60) return t("time.min", { n: mins });
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `usada há ${hours}h`;
+  if (hours < 24) return t("time.hour", { n: hours });
   const days = Math.floor(hours / 24);
-  return days === 1 ? "usada ontem" : `usada há ${days} dias`;
+  return days === 1 ? t("time.yesterday") : t("time.days", { n: days });
 }
 
 function CredRow({ cred }: { cred: CredMeta }) {
+  const t = useT();
   const reveal = useVaultStore((s) => s.reveal);
   const remove = useVaultStore((s) => s.remove);
   const [secret, setSecret] = useState<string | null>(null);
@@ -22,7 +24,7 @@ function CredRow({ cred }: { cred: CredMeta }) {
 
   const isKey = cred.kind === "ssh_key";
   const badge = isKey ? (cred.algo ?? "key") : (cred.scope ?? "senha");
-  const noSecretNote = isKey ? "sem passphrase" : "NOPASSWD — sudo sem senha";
+  const noSecretNote = isKey ? t("vault.noPassphrase") : t("vault.nopasswd");
 
   const doReveal = () => {
     if (secret) {
@@ -45,7 +47,7 @@ function CredRow({ cred }: { cred: CredMeta }) {
       <div className="cred-row__body">
         <div className="cred-row__label">{cred.label}</div>
         <div className="cred-row__sub">
-          {cred.hasSecret ? relativeTime(cred.lastUsed) : noSecretNote}
+          {cred.hasSecret ? relativeTime(cred.lastUsed, t) : noSecretNote}
         </div>
       </div>
       {cred.hasSecret ? (
@@ -83,7 +85,7 @@ function CredRow({ cred }: { cred: CredMeta }) {
                 void remove(cred.id);
               }}
             >
-              Excluir
+              {t("vault.delete")}
             </div>
           </div>
         )}
@@ -94,13 +96,14 @@ function CredRow({ cred }: { cred: CredMeta }) {
 
 type CredType = "key" | "login" | "sudo";
 
-const CRED_TYPES: { id: CredType; icon: string; title: string; desc: string }[] = [
-  { id: "key", icon: "🔑", title: "Chave SSH", desc: "passphrase da chave privada" },
-  { id: "login", icon: "👤", title: "Login + senha", desc: "autenticação SSH por senha" },
-  { id: "sudo", icon: "#", title: "Senha de sudo", desc: "quando o login é por chave" },
+const CRED_TYPES: { id: CredType; icon: string; titleKey: string; descKey: string }[] = [
+  { id: "key", icon: "🔑", titleKey: "vault.typeKey", descKey: "vault.typeKeyD" },
+  { id: "login", icon: "👤", titleKey: "vault.typeLogin", descKey: "vault.typeLoginD" },
+  { id: "sudo", icon: "#", titleKey: "vault.typeSudo", descKey: "vault.typeSudoD" },
 ];
 
 function AddCredForm({ onDone }: { onDone: () => void }) {
+  const t = useT();
   const save = useVaultStore((s) => s.save);
   const [type, setType] = useState<CredType>("login");
   const [keyName, setKeyName] = useState("");
@@ -160,16 +163,16 @@ function AddCredForm({ onDone }: { onDone: () => void }) {
   return (
     <div className="add-cred">
       <div className="add-cred__types">
-        {CRED_TYPES.map((t) => (
+        {CRED_TYPES.map((ty) => (
           <div
-            key={t.id}
-            className={`add-cred__type${type === t.id ? " add-cred__type--on" : ""}`}
-            onClick={() => setType(t.id)}
+            key={ty.id}
+            className={`add-cred__type${type === ty.id ? " add-cred__type--on" : ""}`}
+            onClick={() => setType(ty.id)}
           >
-            <span className="add-cred__type-icon">{t.icon}</span>
+            <span className="add-cred__type-icon">{ty.icon}</span>
             <div>
-              <div className="add-cred__type-title">{t.title}</div>
-              <div className="add-cred__type-desc">{t.desc}</div>
+              <div className="add-cred__type-title">{t(ty.titleKey)}</div>
+              <div className="add-cred__type-desc">{t(ty.descKey)}</div>
             </div>
           </div>
         ))}
@@ -179,7 +182,7 @@ function AddCredForm({ onDone }: { onDone: () => void }) {
         <div className="add-cred__row">
           <input
             className="add-cred__input"
-            placeholder="nome da chave — ex.: id_ed25519"
+            placeholder={t("vault.keyName")}
             value={keyName}
             onChange={(e) => setKeyName(e.target.value)}
             style={{ flex: 1 }}
@@ -190,13 +193,13 @@ function AddCredForm({ onDone }: { onDone: () => void }) {
             <option value="rsa">rsa</option>
             <option value="ecdsa">ecdsa</option>
           </select>
-          <Toggle on={noPassphrase} onChange={setNoPassphrase} label="sem passphrase" />
+          <Toggle on={noPassphrase} onChange={setNoPassphrase} label={t("vault.noPassToggle")} />
         </div>
       ) : (
         <div className="add-cred__row">
           <input
             className="add-cred__input"
-            placeholder="usuário"
+            placeholder={t("vault.user")}
             value={user}
             onChange={(e) => setUser(e.target.value)}
             style={{ width: 130 }}
@@ -205,13 +208,13 @@ function AddCredForm({ onDone }: { onDone: () => void }) {
           <span className="add-cred__at">@</span>
           <input
             className="add-cred__input"
-            placeholder="host — ex.: 10.4.2.18 ou alias"
+            placeholder={t("vault.hostPh")}
             value={host}
             onChange={(e) => setHost(e.target.value)}
             style={{ flex: 1 }}
           />
           {type === "login" ? (
-            <Toggle on={alsoSudo} onChange={setAlsoSudo} label="mesma senha no sudo" />
+            <Toggle on={alsoSudo} onChange={setAlsoSudo} label={t("vault.sameSudo")} />
           ) : (
             <Toggle on={noPasswd} onChange={setNoPasswd} label="NOPASSWD" />
           )}
@@ -222,22 +225,22 @@ function AddCredForm({ onDone }: { onDone: () => void }) {
         {secretless ? (
           <div className="add-cred__note">
             {type === "key"
-              ? "Chave sem passphrase — nada será salvo no Keychain, só o registro."
-              : "sudo configurado com NOPASSWD — nenhuma senha é necessária nem salva."}
+              ? t("vault.noteKey")
+              : t("vault.noteSudo")}
           </div>
         ) : (
           <PasswordField
             value={secret}
             onChange={setSecret}
-            placeholder={type === "key" ? "passphrase (vai só para o Keychain)" : "senha (vai só para o Keychain)"}
+            placeholder={type === "key" ? t("vault.passphrasePh") : t("vault.passwordPh")}
             onEnter={submit}
           />
         )}
         <div className={`add-cred__save${valid ? "" : " add-cred__save--off"}`} onClick={submit}>
-          {saving ? "Salvando…" : "Salvar"}
+          {saving ? t("vault.saving") : t("vault.save")}
         </div>
         <div className="add-cred__cancel" onClick={onDone}>
-          Cancelar
+          {t("vault.cancel")}
         </div>
       </div>
     </div>
@@ -245,6 +248,7 @@ function AddCredForm({ onDone }: { onDone: () => void }) {
 }
 
 export function VaultModal() {
+  const t = useT();
   const { modalOpen, locked, count, creds, busy, error } = useVaultStore();
   const closeModal = useVaultStore((s) => s.closeModal);
   const unlock = useVaultStore((s) => s.unlock);
@@ -275,7 +279,7 @@ export function VaultModal() {
           <div className="vault-modal__titles">
             <div className="vault-modal__title">Vault</div>
             <div className="vault-modal__sub">
-              {count} credenciais · {locked ? "bloqueado" : "destravado com Touch ID"} · {backend}
+              {locked ? t("vault.subLocked", { n: count, backend }) : t("vault.subUnlocked", { n: count, backend })}
             </div>
           </div>
           {!locked && (
@@ -284,22 +288,19 @@ export function VaultModal() {
                 <rect x="4" y="10" width="16" height="11" rx="2" />
                 <path d="M8 10V7a4 4 0 0 1 8 0v3" />
               </svg>
-              Bloquear
+              {t("vault.lock")}
             </div>
           )}
         </div>
 
         {locked ? (
           <div className="vault-modal__locked">
-            <div className="vault-modal__locked-msg">
-              Os segredos ficam no {backend}. Destrave com a autenticação do sistema para ver e
-              gerenciar credenciais.
-            </div>
+            <div className="vault-modal__locked-msg">{t("vault.lockedMsg", { backend })}</div>
             <div
               className={`vault-modal__unlock${busy ? " vault-modal__unlock--busy" : ""}`}
               onClick={() => void unlock()}
             >
-              {busy ? "Aguardando autenticação…" : "Destravar com Touch ID"}
+              {busy ? t("vault.unlocking") : t("vault.unlock")}
             </div>
             {error && <div className="vault-modal__error">{error}</div>}
           </div>
@@ -312,7 +313,7 @@ export function VaultModal() {
                   <path d="M21 21l-4-4" />
                 </svg>
                 <input
-                  placeholder="Buscar credenciais…"
+                  placeholder={t("vault.search")}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
@@ -320,13 +321,13 @@ export function VaultModal() {
             </div>
 
             <div className="vault-modal__list">
-              <div className="vault-modal__section">Chaves SSH</div>
-              {keys.length === 0 && <div className="vault-modal__empty">nenhuma chave</div>}
+              <div className="vault-modal__section">{t("vault.keys")}</div>
+              {keys.length === 0 && <div className="vault-modal__empty">{t("vault.noKeys")}</div>}
               {keys.map((c) => (
                 <CredRow key={c.id} cred={c} />
               ))}
-              <div className="vault-modal__section vault-modal__section--gap">Senhas</div>
-              {pwds.length === 0 && <div className="vault-modal__empty">nenhuma senha</div>}
+              <div className="vault-modal__section vault-modal__section--gap">{t("vault.passwords")}</div>
+              {pwds.length === 0 && <div className="vault-modal__empty">{t("vault.noPwd")}</div>}
               {pwds.map((c) => (
                 <CredRow key={c.id} cred={c} />
               ))}
@@ -338,10 +339,10 @@ export function VaultModal() {
               ) : (
                 <>
                   <div className="vault-modal__add" onClick={() => setAdding(true)}>
-                    + Adicionar credencial
+                    {t("vault.add")}
                   </div>
                   <div className="vault-modal__spacer" />
-                  <span className="vault-modal__autolock">bloqueio automático: 15 min inativo</span>
+                  <span className="vault-modal__autolock">{t("vault.autolock")}</span>
                 </>
               )}
             </div>

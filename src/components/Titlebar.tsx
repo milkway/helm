@@ -2,10 +2,13 @@ import { useEffect } from "react";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
 import { useVpnStore } from "../stores/vpn";
+import { useT } from "../i18n";
+import { LanguageSelector } from "./LanguageSelector";
 
 const IS_MAC = navigator.userAgent.includes("Mac");
 
 export function Titlebar() {
+  const t = useT();
   const connected = useSessionsStore(
     (s) => s.sessions.filter((x) => x.status === "connected").length,
   );
@@ -15,7 +18,6 @@ export function Titlebar() {
   const toggleVpn = useVpnStore((s) => s.togglePanel);
   const loadVpn = useVpnStore((s) => s.load);
 
-  // carrega o estado da VPN uma vez para o indicador da titlebar
   useEffect(() => {
     void loadVpn();
   }, [loadVpn]);
@@ -36,47 +38,35 @@ export function Titlebar() {
         <span className="titlebar__name">Helm</span>
       </div>
       <div className="titlebar__center" data-tauri-drag-region>
-        <div
-          className="titlebar__search"
-          style={{ cursor: "text" }}
-          onClick={() => togglePalette(true)}
-        >
+        <div className="titlebar__search" style={{ cursor: "text" }} onClick={() => togglePalette(true)}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#7d848d" strokeWidth="2">
             <circle cx="11" cy="11" r="7" />
             <path d="M21 21l-4-4" />
           </svg>
-          <span className="titlebar__search-text">Search hosts, sessions, commands…</span>
+          <span className="titlebar__search-text">{t("tb.search")}</span>
           <span className="titlebar__kbd">⌘K</span>
         </div>
       </div>
       <div className="titlebar__right">
         <div className="titlebar__connected" style={connected === 0 ? { opacity: 0.45 } : undefined}>
           <span className="titlebar__connected-dot" />
-          <span className="titlebar__connected-label">
-            {connected} connected
-          </span>
+          <span className="titlebar__connected-label">{t("tb.connected", { n: connected })}</span>
         </div>
+        <LanguageSelector />
         <div
           className="titlebar__settings"
           style={{ cursor: "pointer" }}
-          title={vpnConnected ? "VPN conectada" : "VPNs"}
+          title={vpnConnected ? t("tb.vpnOn") : t("tb.vpns")}
           onClick={() => toggleVpn()}
         >
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke={vpnConnected ? "#5aa9e0" : "#a2a8b0"}
-            strokeWidth="1.8"
-          >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={vpnConnected ? "#5aa9e0" : "#a2a8b0"} strokeWidth="1.8">
             <path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z" />
           </svg>
         </div>
         <div
           className="titlebar__settings"
           style={{ cursor: "pointer" }}
-          title="Sobre o Helm"
+          title={t("tb.about")}
           onClick={() => openModal({ kind: "about" })}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a2a8b0" strokeWidth="1.8">

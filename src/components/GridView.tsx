@@ -6,6 +6,7 @@ import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
 import { statusColor, type Host, type SessionInfo, type SessionStatus } from "../types";
 import { TermHost } from "./TermHost";
+import { useT } from "../i18n";
 
 const CARD_BODY_HEIGHT: Record<number, number> = { 2: 150, 3: 120, 4: 96 };
 
@@ -24,6 +25,7 @@ function tagFor(status: SessionStatus): { label: string; color: string; bg: stri
 }
 
 function GridCard({ session, host, dense }: { session: SessionInfo; host?: Host; dense: boolean }) {
+  const t = useT();
   const focus = useSessionsStore((s) => s.focus);
   const activeId = useSessionsStore((s) => s.activeId);
   const setView = useUiStore((s) => s.setView);
@@ -63,7 +65,7 @@ function GridCard({ session, host, dense }: { session: SessionInfo; host?: Host;
 
   return (
     <div className={`grid-card${session.status === "error" ? " grid-card--attention" : ""}`}>
-      <div className="grid-card__header" onClick={openInTerm} title="Abrir no modo terminal">
+      <div className="grid-card__header" onClick={openInTerm} title={t("grid.openTerm")}>
         <span
           className={`grid-card__dot${session.status === "connecting" || session.status === "reconnecting" ? " host-row__dot--spin" : ""}`}
           style={{ background: color }}
@@ -81,7 +83,7 @@ function GridCard({ session, host, dense }: { session: SessionInfo; host?: Host;
           <>
             <div
               className="grid-card__icon"
-              title="Copiar saída visível"
+              title={t("grid.copyOut")}
               onClick={(e) => {
                 e.stopPropagation();
                 void copyVisible(session.id).then((ok) => ok && flash("out"));
@@ -98,7 +100,7 @@ function GridCard({ session, host, dense }: { session: SessionInfo; host?: Host;
             </div>
             <div
               className="grid-card__icon"
-              title="Screenshot do terminal (PNG)"
+              title={t("grid.png")}
               onClick={(e) => {
                 e.stopPropagation();
                 void cardToPng(session.id, name, addr).then((ok) => ok && flash("png"));
@@ -146,7 +148,7 @@ function GridCard({ session, host, dense }: { session: SessionInfo; host?: Host;
                 <rect x="9" y="9" width="11" height="11" rx="2" />
                 <path d="M5 15V5a2 2 0 0 1 2-2h10" />
               </svg>
-              {copied === "sel" ? "Copiado ✓" : "Copiar seleção"}
+              {copied === "sel" ? t("grid.copied") : t("grid.copySel")}
             </div>
             <div className="sel-chip__div" />
             <div
@@ -167,6 +169,7 @@ function GridCard({ session, host, dense }: { session: SessionInfo; host?: Host;
 }
 
 export function GridView() {
+  const t = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const hosts = useHostsStore((s) => s.hosts);
   const gridCols = useUiStore((s) => s.gridCols);
@@ -174,7 +177,7 @@ export function GridView() {
   if (sessions.length === 0) {
     return (
       <div className="term term--empty">
-        <span className="term__hint">Nenhuma sessão aberta — selecione um host na sidebar</span>
+        <span className="term__hint">{t("term.gridEmpty")}</span>
       </div>
     );
   }

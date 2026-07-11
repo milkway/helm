@@ -6,10 +6,11 @@ import { useVpnStore } from "../stores/vpn";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
 import { sessionUsesTmux, statusColor, tmuxSessionName, type Host, type SessionInfo } from "../types";
+import { useT } from "../i18n";
 
 interface Item {
   key: string;
-  section: "Sessões" | "Comandos";
+  section: string;
   label: string;
   sub?: string;
   hint?: string;
@@ -18,24 +19,27 @@ interface Item {
   run: () => void;
 }
 
-function sessionStatusText(s: SessionInfo): string {
+function sessionStatusText(s: SessionInfo, t: (k: string, v?: Record<string, string | number>) => string): string {
   switch (s.status) {
     case "connected":
-      return "conectado";
+      return t("sess.connected");
     case "connecting":
-      return "conectando…";
+      return t("sess.connecting");
     case "reconnecting":
-      return `reconectando ${s.attempt ?? 1}/5…`;
+      return t("sess.reconnecting", { n: s.attempt ?? 1 });
+    case "vpn":
+      return t("sess.vpn");
     case "error":
-      return "erro";
+      return t("sess.error");
     case "detached":
-      return "detachada";
+      return t("sess.detached");
     default:
-      return "encerrada";
+      return t("sess.exited");
   }
 }
 
 export function CommandPalette() {
+  const t = useT();
   const open = useUiStore((s) => s.paletteOpen);
   const togglePalette = useUiStore((s) => s.togglePalette);
   const openModal = useUiStore((s) => s.openModal);
@@ -68,10 +72,10 @@ export function CommandPalette() {
       const h = hostOf(s.hostId);
       list.push({
         key: `sess-${s.id}`,
-        section: "Sessões",
+        section: t("pal.sessions"),
         label: h?.name ?? s.hostId,
-        sub: `${h ? (h.user ? `${h.user}@${h.host}` : h.host) : ""} · ${sessionStatusText(s)}`,
-        hint: "↵ abrir",
+        sub: `${h ? (h.user ? `${h.user}@${h.host}` : h.host) : ""} · ${sessionStatusText(s, t)}`,
+        hint: t("pal.open"),
         dotColor: s.attention ? "#f0785a" : statusColor(s.status),
         run: () => {
           focus(s.id);
@@ -83,8 +87,8 @@ export function CommandPalette() {
     if (activeHost) {
       list.push({
         key: "cmd-clmux",
-        section: "Comandos",
-        label: `clmux — abrir Claude em ${activeHost.name}`,
+        section: t("pal.commands"),
+        label: t("pal.clmux", { host: activeHost.name }),
         hint: "⌘⏎",
         icon: "cl",
         run: () => {
@@ -99,8 +103,8 @@ export function CommandPalette() {
       if (activeSession && sessionUsesTmux(activeSession, activeHost)) {
         list.push({
           key: "cmd-detach",
-          section: "Comandos",
-          label: `Detach — ${activeHost.name}`,
+          section: t("pal.commands"),
+          label: t("pal.detach", { host: activeHost.name }),
           hint: "⌘D",
           icon: "⏏",
           run: () => {
@@ -111,30 +115,30 @@ export function CommandPalette() {
       }
       list.push({
         key: "cmd-tmux",
-        section: "Comandos",
-        label: `Instalar tmux em ${activeHost.name}`,
+        section: t("pal.commands"),
+        label: t("pal.installTmux", { host: activeHost.name }),
         icon: "⟳",
         run: () => openModal({ kind: "installTmux", hostId: activeHost.id }),
       });
     }
     list.push({
       key: "cmd-newhost",
-      section: "Comandos",
-      label: "Adicionar host",
+      section: t("pal.commands"),
+      label: t("pal.addHost"),
       icon: "+",
       run: () => openModal({ kind: "addHost" }),
     });
     list.push({
       key: "cmd-newsession",
-      section: "Comandos",
-      label: "Nova sessão",
+      section: t("pal.commands"),
+      label: t("pal.newSession"),
       icon: "$",
       run: () => openModal({ kind: "newSession", hostId: activeHost?.id }),
     });
     list.push({
       key: "cmd-import",
-      section: "Comandos",
-      label: "Importar de ~/.ssh/config",
+      section: t("pal.commands"),
+      label: t("pal.import"),
       icon: "⇩",
       run: () => {
         togglePalette(false);
@@ -143,8 +147,8 @@ export function CommandPalette() {
     });
     list.push({
       key: "cmd-vpn",
-      section: "Comandos",
-      label: "VPNs — painel de conexões",
+      section: t("pal.commands"),
+      label: t("pal.vpn"),
       icon: "⛨",
       run: () => {
         togglePalette(false);
@@ -153,13 +157,13 @@ export function CommandPalette() {
     });
     list.push({
       key: "cmd-about",
-      section: "Comandos",
-      label: "Sobre o Helm",
+      section: t("pal.commands"),
+      label: t("pal.about"),
       icon: "?",
       run: () => openModal({ kind: "about" }),
     });
     return list;
-  }, [sessions, hosts, activeHost, activeSession, focus, openSession, openModal, togglePalette, loadHosts, toggleVpnPanel]);
+  }, [t, sessions, hosts, activeHost, activeSession, focus, openSession, openModal, togglePalette, loadHosts, toggleVpnPanel]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -212,15 +216,15 @@ export function CommandPalette() {
           <input
             ref={inputRef}
             className="palette__input"
-            placeholder="Buscar sessões e comandos…"
+            placeholder={t("pal.search")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKey}
           />
-          <span className="palette__esc">esc</span>
+          <span className="palette__esc">{t("pal.esc")}</span>
         </div>
         <div className="palette__list">
-          {filtered.length === 0 && <div className="palette__empty">nada encontrado</div>}
+          {filtered.length === 0 && <div className="palette__empty">{t("pal.none")}</div>}
           {filtered.map((it) => {
             idx += 1;
             const showSection = it.section !== lastSection;
@@ -250,9 +254,9 @@ export function CommandPalette() {
           })}
         </div>
         <div className="palette__footer">
-          <span>↑↓ navegar</span>
-          <span>↵ abrir</span>
-          <span>⌘⏎ ação padrão</span>
+          <span>{t("pal.navigate")}</span>
+          <span>{t("pal.open")}</span>
+          <span>{t("pal.default")}</span>
         </div>
       </div>
     </div>

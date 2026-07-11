@@ -5,9 +5,11 @@ import { useUiStore } from "../stores/ui";
 import { useVaultStore } from "../stores/vault";
 import type { Host } from "../types";
 import { Toggle } from "./fields";
+import { useT } from "../i18n";
 
 /** Add/editar host — design 1b. */
 export function HostModal({ editHostId }: { editHostId?: string }) {
+  const t = useT();
   const closeModal = useUiStore((s) => s.closeModal);
   const hosts = useHostsStore((s) => s.hosts);
   const load = useHostsStore((s) => s.load);
@@ -99,8 +101,8 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
             </svg>
           </div>
           <div className="hxm__titles">
-            <div className="hxm__title">{editing ? "Editar host" : "Add host"}</div>
-            <div className="hxm__sub">Credenciais guardadas no Vault, destravadas com Touch&nbsp;ID</div>
+            <div className="hxm__title">{editing ? t("hm.edit") : t("hm.add")}</div>
+            <div className="hxm__sub">{t("hm.sub")}</div>
           </div>
           <span className="hxm__close" onClick={closeModal}>×</span>
         </div>
@@ -108,11 +110,11 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
         <div className="hxm__body">
           <div className="hxm__grid" style={{ gridTemplateColumns: "1fr 130px" }}>
             <div>
-              <div className="hxm__label">Nome</div>
+              <div className="hxm__label">{t("hm.name")}</div>
               <input className="hxm__input" value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder="atlas" />
             </div>
             <div>
-              <div className="hxm__label">Grupo</div>
+              <div className="hxm__label">{t("hm.group")}</div>
               <input
                 className="hxm__input"
                 value={group}
@@ -129,16 +131,16 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
           </div>
           <div className="hxm__grid" style={{ gridTemplateColumns: "1fr 90px" }}>
             <div>
-              <div className="hxm__label">Endereço SSH</div>
+              <div className="hxm__label">{t("hm.addr")}</div>
               <input
                 className="hxm__input hxm__input--mono"
                 value={addr}
                 onChange={(e) => setAddr(e.target.value)}
-                placeholder="deploy@10.4.2.18 ou alias do ~/.ssh/config"
+                placeholder={t("hm.addrPh")}
               />
             </div>
             <div>
-              <div className="hxm__label">Porta</div>
+              <div className="hxm__label">{t("in.port")}</div>
               <input
                 className="hxm__input hxm__input--mono"
                 value={port}
@@ -149,7 +151,7 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
           </div>
 
           <div>
-            <div className="hxm__label">Autenticação</div>
+            <div className="hxm__label">{t("hm.auth")}</div>
             {vault.locked ? (
               <div className="hxm__cred hxm__cred--locked" onClick={() => void vault.unlock()}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="1.8">
@@ -158,7 +160,7 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
                 </svg>
                 <div className="hxm__cred-body">
                   <div className="hxm__cred-title">ssh-agent / ~/.ssh/config</div>
-                  <div className="hxm__cred-sub">destrave o Vault para escolher uma credencial</div>
+                  <div className="hxm__cred-sub">{t("hm.authLockedSub")}</div>
                 </div>
                 <span className="hxm__badge hxm__badge--amber">VAULT</span>
               </div>
@@ -168,7 +170,7 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
                 value={credentialRef ?? ""}
                 onChange={(e) => setCredentialRef(e.target.value || null)}
               >
-                <option value="">ssh-agent / ~/.ssh/config (padrão)</option>
+                <option value="">{t("hm.authDefault")}</option>
                 {vault.creds.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.label} — {c.kind === "ssh_key" ? (c.algo ?? "chave") : (c.scope ?? "senha")}
@@ -179,19 +181,19 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
           </div>
 
           <div className="hxm__toggles">
-            <Toggle on={autoReconnect} onChange={setAutoReconnect} label="Reconectar automaticamente (backoff 1–30s)" />
-            <Toggle on={autoInstallTmux} onChange={setAutoInstallTmux} label="Instalar tmux se não existir (via ssh -tt)" />
-            <Toggle on={autoAttach} onChange={setAutoAttach} label="Re-atachar última sessão" />
+            <Toggle on={autoReconnect} onChange={setAutoReconnect} label={t("hm.toggleReconnect")} />
+            <Toggle on={autoInstallTmux} onChange={setAutoInstallTmux} label={t("hm.toggleTmux")} />
+            <Toggle on={autoAttach} onChange={setAutoAttach} label={t("hm.toggleAttach")} />
           </div>
 
           <div>
-            <div className="hxm__label">VPN (opcional)</div>
+            <div className="hxm__label">{t("hm.vpn")}</div>
             <select
               className="hxm__input hxm__select"
               value={vpnProfile ?? ""}
               onChange={(e) => setVpnProfile(e.target.value || null)}
             >
-              <option value="">não requer VPN</option>
+              <option value="">{t("hm.vpnNone")}</option>
               {vpnProfiles.map((p) => (
                 <option key={p.name} value={p.name}>
                   {p.name}
@@ -208,13 +210,13 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
               className={`hxm__test-btn${testing ? " hxm__test-btn--busy" : ""}`}
               onClick={runTest}
             >
-              {testing ? "Testando…" : "Testar conexão"}
+              {testing ? t("hm.testing") : t("hm.test")}
             </div>
             {test && (
               <div className={`hxm__test-result${test.ok ? "" : " hxm__test-result--err"}`}>
                 {test.ok
-                  ? `✓ Conectado · ${test.latencyMs} ms${test.tmux ? ` · ${test.tmux} encontrado` : " · sem tmux"}`
-                  : `✗ ${test.message ?? "conexão falhou"}`}
+                  ? t("hm.testOk", { ms: test.latencyMs, tmux: test.tmux ? t("hm.tmuxFound", { v: test.tmux }) : t("hm.noTmux") })
+                  : t("hm.testErr", { msg: test.message ?? "" })}
               </div>
             )}
           </div>
@@ -222,9 +224,9 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
         </div>
 
         <div className="hxm__footer">
-          <div className="hxm__btn hxm__btn--ghost" onClick={closeModal}>Cancelar</div>
+          <div className="hxm__btn hxm__btn--ghost" onClick={closeModal}>{t("hm.cancel")}</div>
           <div className={`hxm__btn hxm__btn--primary${valid ? "" : " hxm__btn--off"}`} onClick={submit}>
-            {saving ? "Salvando…" : editing ? "Salvar" : "Adicionar host"}
+            {saving ? t("vault.saving") : editing ? t("hm.save") : t("hm.create")}
           </div>
         </div>
       </div>

@@ -5,12 +5,14 @@ import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
 import { useVaultStore } from "../stores/vault";
 import { statusColor, type Host, type SessionInfo } from "../types";
+import { useT } from "../i18n";
 
 function hostSession(sessions: SessionInfo[], hostId: string): SessionInfo | undefined {
   return sessions.find((s) => s.hostId === hostId);
 }
 
 function HostRow({ host }: { host: Host }) {
+  const t = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
   const open = useSessionsStore((s) => s.open);
@@ -86,7 +88,7 @@ function HostRow({ host }: { host: Host }) {
                 openModal({ kind: "newSession", hostId: host.id });
               }}
             >
-              Nova sessão…
+              {t("sb.newSession")}
             </div>
             <div
               className="ctx-menu__item"
@@ -95,7 +97,7 @@ function HostRow({ host }: { host: Host }) {
                 openModal({ kind: "editHost", hostId: host.id });
               }}
             >
-              Editar host…
+              {t("sb.editHost")}
             </div>
             <div
               className="ctx-menu__item"
@@ -104,7 +106,7 @@ function HostRow({ host }: { host: Host }) {
                 openModal({ kind: "installTmux", hostId: host.id });
               }}
             >
-              Instalar tmux…
+              {t("sb.installTmux")}
             </div>
             <div
               className="ctx-menu__item ctx-menu__item--danger"
@@ -113,7 +115,7 @@ function HostRow({ host }: { host: Host }) {
                 void deleteHost(host.id).then(loadHosts);
               }}
             >
-              Excluir host
+              {t("sb.deleteHost")}
             </div>
           </div>
         </>
@@ -123,6 +125,7 @@ function HostRow({ host }: { host: Host }) {
 }
 
 export function Sidebar() {
+  const t = useT();
   const hosts = useHostsStore((s) => s.hosts);
   const load = useHostsStore((s) => s.load);
   const openModal = useUiStore((s) => s.openModal);
@@ -145,11 +148,11 @@ export function Sidebar() {
   return (
     <div className="sidebar">
       <div className="sidebar__header">
-        <span className="sidebar__title">Hosts &amp; Sessions</span>
+        <span className="sidebar__title">{t("sb.title")}</span>
         <div
           className="sidebar__add"
           style={{ cursor: "pointer" }}
-          title="Add host"
+          title={t("sb.addHost")}
           onClick={() => openModal({ kind: "addHost" })}
         >
           +
@@ -162,11 +165,11 @@ export function Sidebar() {
           <div className="attention-banner__body">
             <div className="attention-banner__title">
               {attentionSessions.length === 1
-                ? "1 session needs attention"
-                : `${attentionSessions.length} sessions need attention`}
+                ? t("sb.attn1")
+                : t("sb.attnN", { n: attentionSessions.length })}
             </div>
             <div className="attention-banner__sub">
-              {attentionHost?.name ?? firstAttention.hostId} · aguardando input
+              {attentionHost?.name ?? firstAttention.hostId} · {t("sb.awaiting")}
             </div>
           </div>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f0785a" strokeWidth="2">
@@ -177,7 +180,7 @@ export function Sidebar() {
 
       <div className="sidebar__list">
         {groups.length === 0 && (
-          <div className="sidebar__empty">Nenhum host ainda</div>
+          <div className="sidebar__empty">{t("sb.empty")}</div>
         )}
         {groups.map((group) => {
           const collapsed = collapsedGroups.includes(group.name);
@@ -215,6 +218,7 @@ export function Sidebar() {
 }
 
 function VaultFooter() {
+  const t = useT();
   const locked = useVaultStore((s) => s.locked);
   const count = useVaultStore((s) => s.count);
   const openModal = useVaultStore((s) => s.openModal);
@@ -237,9 +241,9 @@ function VaultFooter() {
         </svg>
       </div>
       <div className="vault-footer__body">
-        <div className="vault-footer__title">{locked ? "Vault locked" : "Vault unlocked"}</div>
+        <div className="vault-footer__title">{locked ? t("sb.vaultLocked") : t("sb.vaultUnlocked")}</div>
         <div className="vault-footer__sub">
-          {count} credentials · Touch&nbsp;ID
+          {t("sb.credentials", { n: count })}
         </div>
       </div>
       <div

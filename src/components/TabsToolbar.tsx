@@ -3,10 +3,12 @@ import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore, type GridCols } from "../stores/ui";
 import { sessionUsesTmux, statusColor, tmuxSessionName } from "../types";
+import { useT } from "../i18n";
 
 const DENSITIES: GridCols[] = [2, 3, 4];
 
 export function TabsToolbar() {
+  const t = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
   const focus = useSessionsStore((s) => s.focus);
@@ -59,7 +61,7 @@ export function TabsToolbar() {
       })}
       <div
         className="tabsbar__new"
-        title="Nova sessão…"
+        title={t("tt.newSession")}
         onClick={() => openModal({ kind: "newSession", hostId: activeSession?.hostId })}
       >
         +
@@ -75,7 +77,7 @@ export function TabsToolbar() {
         </div>
         <div
           className="detach-btn"
-          title="Detach — keeps running on server"
+          title={t("tt.detachTip")}
           style={tmuxActive ? undefined : { opacity: 0.45, cursor: "default" }}
           onClick={() => {
             if (tmuxActive && activeSession) detachTab(activeSession.id);
@@ -85,14 +87,14 @@ export function TabsToolbar() {
             <path d="M12 4l-6 6h4v6h4v-6h4z" fill="#e0a15e" stroke="none" />
             <path d="M5 20h14" />
           </svg>
-          <span className="detach-btn__label">Detach</span>
+          <span className="detach-btn__label">{t("tt.detach")}</span>
         </div>
         {view === "grid" && (
           <div className="seg-control seg-control--mono">
             {DENSITIES.map((n) => (
               <div
                 key={n}
-                title={`${n} colunas`}
+                title={t("tt.cols", { n })}
                 className={`seg-control__btn seg-control__btn--wide${gridCols === n ? " seg-control__btn--on" : ""}`}
                 onClick={() => setGridCols(n)}
               >
@@ -104,7 +106,7 @@ export function TabsToolbar() {
         <div className="seg-control">
           <div
             className={`seg-control__btn${view === "term" ? " seg-control__btn--on" : ""}`}
-            title="Terminal view"
+            title={t("tt.termView")}
             onClick={() => setView("term")}
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -114,7 +116,7 @@ export function TabsToolbar() {
           </div>
           <div
             className={`seg-control__btn${view === "grid" ? " seg-control__btn--on" : ""}`}
-            title="Grid view — all sessions"
+            title={t("tt.gridView")}
             onClick={() => setView("grid")}
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
