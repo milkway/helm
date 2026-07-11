@@ -32,7 +32,13 @@ Gerenciador desktop de terminais SSH (macOS + Linux). Tauri 2 + React 19 + xterm
 - Tag `vX.Y.Z` → `release.yml` gera `.dmg` (macOS aarch64 + x64) e `.deb` (Ubuntu 22.04) num release **draft**. Publicar é manual (e dispara o DOI do Zenodo).
 - DOI (Zenodo) e site (`milkway.github.io/helm`, deploy via `pages.yml`) documentados no README.
 
+## Instalação do bundle (macOS)
+
+- O `.dmg` é **assinado ad-hoc**, não notarizado pela Apple → o Gatekeeper bloqueia no 1º abrir. Solução: **clique-direito no Helm.app → Abrir**, ou `xattr -dr com.apple.quarantine /Applications/Helm.app`. Notarização exigiria certificado Apple Developer (US$ 99/ano) + passo no `release.yml`.
+- Dados do app (banco SQLite, hosts, ui_prefs): `~/Library/Application Support/io.github.milkway.helm/` — compartilhado entre dev e o bundle.
+
 ## Convenções
 
 - Textos de UI passam por `t("chave")` do i18n (EN/PT/FR/ES). Ao adicionar strings, inclua a chave nos 4 idiomas em `src/i18n/dict.ts`.
 - Screenshots reais do app ficam em `assets/screenshots/` (README) e `site/public/shots/` (site).
+- README em **inglês** (público internacional); site e UI têm seletor de idioma.
