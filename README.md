@@ -19,6 +19,16 @@ O pacote de design (protótipos HTML hifi, fonte da verdade visual) está em [`d
 - **Backend (Rust):** `portable-pty` (orquestra o OpenSSH do sistema via `ssh -tt`), `keyring`, `rusqlite`, `tokio`
 - **Distribuição:** `.dmg` (macOS) e `.deb` (Linux) via GitHub Actions
 
+## Build e release
+
+**Dev:** `npm install` e `npm run tauri dev`.
+
+**Instaladores locais:**
+- **.dmg (macOS):** `npm run tauri build` → `src-tauri/target/release/bundle/dmg/`. No bundle assinado o Vault usa Touch ID real (em `tauri dev` a biometria é pulada, pois o binário solto não a apresenta).
+- **.deb (Linux):** `scripts/build-deb-remote.sh` (compila na máquina `prompt`, Ubuntu 22.04) ou `scripts/build-deb.sh` (Docker).
+
+**Release automático:** empurrar uma tag `vX.Y.Z` dispara o workflow `release.yml`, que gera `.dmg` (macOS aarch64 + x86_64) e `.deb` (Ubuntu 22.04) via `tauri-action` e publica um release draft com os instaladores. O CI (`ci.yml`) roda typecheck, build e `cargo clippy` em cada push/PR.
+
 ## Licença
 
 MIT

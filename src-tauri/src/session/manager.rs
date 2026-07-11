@@ -459,6 +459,7 @@ pub fn open_local_session(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // comando Tauri: injeções de State + params
 pub fn open_ssh_session(
     app: AppHandle,
     sessions: State<'_, Sessions>,
