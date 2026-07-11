@@ -63,7 +63,8 @@ fn emit_vault_status(app: &AppHandle, locked: bool, count: i64) {
 }
 
 /// Distingue "biometria indisponível" (típico no binário de dev não
-/// empacotado) de "usuário recusou/cancelou".
+/// empacotado) de "usuário recusou/cancelou". Só o caminho macOS usa.
+#[cfg(target_os = "macos")]
 enum AuthError {
     Unavailable(String),
     Denied(String),
