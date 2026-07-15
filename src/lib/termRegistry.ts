@@ -56,6 +56,8 @@ export interface TermEntry {
 
 const entries = new Map<string, TermEntry>();
 const pending = new Map<string, Promise<TermEntry>>();
+/** sinal de cancelamento p/ connects em voo (aba fechada durante o connect) */
+const pendingAbort = new Map<string, { aborted: boolean }>();
 /** holder DOM corrente de cada sessão (setado pelo TermHost montado) */
 const holders = new Map<string, { el: HTMLElement; fontSize: number }>();
 
@@ -118,12 +120,21 @@ export function ensureTerm(uiId: string, hostId: string): Promise<TermEntry> {
   const inflight = pending.get(uiId);
   if (inflight) return inflight;
 
-  const promise = createEntry(uiId, hostId).finally(() => pending.delete(uiId));
+  const abort = { aborted: false };
+  pendingAbort.set(uiId, abort);
+  const promise = createEntry(uiId, hostId, abort).finally(() => {
+    pending.delete(uiId);
+    pendingAbort.delete(uiId);
+  });
   pending.set(uiId, promise);
   return promise;
 }
 
-async function createEntry(uiId: string, hostId: string): Promise<TermEntry> {
+async function createEntry(
+  uiId: string,
+  hostId: string,
+  abort: { aborted: boolean },
+): Promise<TermEntry> {
   // A fonte PRECISA estar carregada antes do xterm medir a célula — métricas
   // da fonte fallback deixam espaçamento e geometria errados.
   await ensureFonts();
@@ -131,6 +142,13 @@ async function createEntry(uiId: string, hostId: string): Promise<TermEntry> {
   const ptyId = `${uiId}-${crypto.randomUUID().slice(0, 8)}`;
   const setStatus = useSessionsStore.getState().setStatus;
   const disposers: Array<() => void> = [];
+  // desfaz tudo o que já foi alocado (listeners, PTY, terminal, nó DOM) — usado
+  // quando a conexão falha ou a aba é fechada durante o connect, antes de a
+  // entry entrar em `entries` (senão nada mais chamaria disposeEntry).
+  const cleanup = () => {
+    for (const dispose of disposers.reverse()) dispose();
+    container.remove();
+  };
 
   const container = document.createElement("div");
   container.className = "term__host";
@@ -197,11 +215,21 @@ async function createEntry(uiId: string, hostId: string): Promise<TermEntry> {
   try {
     await openSshSession(ptyId, hostId, term.cols || 80, term.rows || 24, params ?? undefined);
   } catch (err) {
-    term.write(`\r\n\x1b[38;2;240;120;90mfalha ao abrir sessão: ${err}\x1b[0m\r\n`);
-    setStatus(uiId, "exited");
+    // falha ao abrir (ex.: host sumiu do DB): libera listeners/terminal/DOM em
+    // vez de vazá-los; status "error" mostra o overlay com retry (o terminal,
+    // que antes exibia o texto do erro, é descartado aqui)
+    setStatus(uiId, "error");
+    cleanup();
     throw err;
   }
   disposers.push(() => void closeSession(ptyId));
+
+  if (abort.aborted) {
+    // a aba foi fechada durante o connect: desfaz tudo, incl. o PTY já aberto
+    cleanup();
+    throw new Error("sessão cancelada durante a conexão");
+  }
+
   useSessionsStore.getState().setPtyId(uiId, ptyId);
 
   const offData = term.onData((data) => void writeStdin(ptyId, data));
@@ -236,6 +264,10 @@ export function reattachTab(uiId: string): void {
 }
 
 function disposeEntry(uiId: string): void {
+  // cancela um connect em voo (a entry ainda não está em `entries`): o
+  // createEntry desfaz tudo ao resolver, evitando PTY/listeners órfãos
+  const abort = pendingAbort.get(uiId);
+  if (abort) abort.aborted = true;
   const entry = entries.get(uiId);
   if (!entry) return;
   entries.delete(uiId);
