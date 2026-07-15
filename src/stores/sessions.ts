@@ -4,6 +4,9 @@ import type { SessionInfo, SessionStatus } from "../types";
 import { translate } from "../i18n";
 import { useLangStore } from "../i18n/lang";
 
+/** contador monotônico p/ dar id estável a cada linha de log (key do React) */
+let logSeq = 0;
+
 function timestamp(): string {
   return new Date().toLocaleTimeString("pt-BR", { hour12: false });
 }
@@ -99,7 +102,10 @@ export const useSessionsStore = create<SessionsState>((set) => ({
               attempt,
               connectedAt:
                 status === "connected" ? (x.connectedAt ?? Date.now()) : x.connectedAt,
-              log: [...x.log.slice(-30), logLine(status, attempt, delaySecs)],
+              log: [
+                ...x.log.slice(-30),
+                { id: logSeq++, text: logLine(status, attempt, delaySecs) },
+              ],
             }
           : x,
       ),

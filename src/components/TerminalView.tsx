@@ -66,9 +66,12 @@ function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) 
           </div>
         </div>
         <div className="error-card__log">
-          {session.log.slice(-6).map((line, i, arr) => (
-            <div key={i} className={i === arr.length - 1 ? "error-card__log-last" : undefined}>
-              {line}
+          {session.log.slice(-6).map((entry, i, arr) => (
+            <div
+              key={entry.id}
+              className={i === arr.length - 1 ? "error-card__log-last" : undefined}
+            >
+              {entry.text}
             </div>
           ))}
         </div>

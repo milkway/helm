@@ -25,6 +25,12 @@ export type SessionStatus =
   | "detached"
   | "exited";
 
+/** uma linha do log de eventos; `id` monotônico dá key estável na janela deslizante */
+export interface LogEntry {
+  id: number;
+  text: string;
+}
+
 export interface SessionInfo {
   /** id estável da sessão na UI (aba) — o PTY tem id próprio por montagem */
   id: string;
@@ -37,8 +43,8 @@ export interface SessionInfo {
   ptyId: string | null;
   /** incrementa para forçar remontagem do Term (re-attach pós-detach) */
   generation: number;
-  /** log de eventos para a tela de erro (design 3d) */
-  log: string[];
+  /** log de eventos para a tela de erro (design 3d); id estável p/ key do React */
+  log: LogEntry[];
   /** overrides da Nova sessão (1c); null = defaults do host */
   params: import("./lib/ipc").SessionParams | null;
   /** sessão aguardando input do usuário (Fase 8) */

@@ -53,4 +53,9 @@ export const useVpnStore = create<VpnState>((set, get) => ({
 }));
 
 // estado ao vivo (o Rust emite ao conectar/desconectar)
-void onVpnStatus((profiles) => useVpnStore.setState({ profiles }));
+const unlistenStatus = onVpnStatus((profiles) => useVpnStore.setState({ profiles }));
+
+// HMR: sem isto, cada reload do módulo empilha um listener duplicado
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => void unlistenStatus.then((un) => un()));
+}

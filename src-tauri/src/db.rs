@@ -79,9 +79,11 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
-        conn.execute_batch(sql).map_err(|e| e.to_string())?;
-        conn.pragma_update(None, "user_version", i as i64 + 1)
-            .map_err(|e| e.to_string())?;
+        // cada migração é atômica: DDL + bump do user_version num único
+        // BEGIN/COMMIT. Um crash no meio faz rollback (o user_version também é
+        // transacional no SQLite), evitando schema meio-aplicado que travaria o app.
+        let batch = format!("BEGIN;\n{sql}\nPRAGMA user_version = {};\nCOMMIT;", i + 1);
+        conn.execute_batch(&batch).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -204,4 +206,33 @@ pub fn delete_host(db: State<'_, Db>, id: String) -> Result<(), String> {
     conn.execute("DELETE FROM hosts WHERE id = ?1", [id])
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{migrate, MIGRATIONS};
+    use rusqlite::Connection;
+
+    #[test]
+    fn migrate_aplica_tudo_e_e_idempotente() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        // user_version chega ao total de migrações
+        let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(v as usize, MIGRATIONS.len());
+
+        // rodar de novo é no-op (skip) e não falha
+        migrate(&conn).unwrap();
+
+        // schema aplicado (a coluna da v3 existe → migração transacional rodou)
+        let has_col: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('credentials_meta') WHERE name='has_secret'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_col, 1);
+    }
 }
