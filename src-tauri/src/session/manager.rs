@@ -84,31 +84,41 @@ fn set_attention(app: &AppHandle, session: &Session, id: &str, active: bool, rea
 }
 
 /// Remove sequências ANSI/escape para analisar o texto "cru" do prompt.
+/// Itera por chars (não bytes) para preservar UTF-8 — caracteres multibyte
+/// como `❯` ou acentos precisam sobreviver à limpeza p/ a heurística casar.
 fn strip_ansi(s: &str) -> String {
-    let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == 0x1b {
-            i += 1;
-            if i < bytes.len() && bytes[i] == b'[' {
-                i += 1;
-                while i < bytes.len() && !bytes[i].is_ascii_alphabetic() {
-                    i += 1;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            Some('[') => {
+                chars.next(); // '['
+                // consome parâmetros até a letra final (ASCII)
+                while let Some(&pc) = chars.peek() {
+                    chars.next();
+                    if pc.is_ascii_alphabetic() {
+                        break;
+                    }
                 }
-                i += 1; // consome a letra final
-            } else if i < bytes.len() && bytes[i] == b']' {
-                // OSC até BEL ou ST
-                while i < bytes.len() && bytes[i] != 0x07 && bytes[i] != 0x1b {
-                    i += 1;
-                }
-                i += 1;
-            } else {
-                i += 1;
             }
-        } else {
-            out.push(bytes[i] as char);
-            i += 1;
+            Some(']') => {
+                chars.next(); // ']'
+                // OSC até BEL ou ST (ESC); o ESC de um ST é reprocessado no loop
+                while let Some(&pc) = chars.peek() {
+                    if pc == '\u{07}' || pc == '\u{1b}' {
+                        break;
+                    }
+                    chars.next();
+                }
+                if chars.peek() == Some(&'\u{07}') {
+                    chars.next(); // consome o BEL terminador
+                }
+            }
+            _ => { /* ESC solto: descarta */ }
         }
     }
     out
@@ -291,7 +301,10 @@ fn manager_loop(
                 eprintln!("[session {id}] VPN '{profile}' falhou: {e}");
                 emit_status(&app, &id, "error", Some(0), None);
                 if let Some(sessions) = app.try_state::<Sessions>() {
-                    sessions.0.lock().unwrap().remove(&id);
+                    let mut map = sessions.0.lock().unwrap();
+                    if map.get(&id).is_some_and(|s| Arc::ptr_eq(s, &session)) {
+                        map.remove(&id);
+                    }
                 }
                 return;
             }
@@ -347,7 +360,13 @@ fn manager_loop(
                                 tail.push_str(&String::from_utf8_lossy(&buf[..n]));
                                 let len = tail.len();
                                 if len > 400 {
-                                    *tail = tail[len - 400..].to_string();
+                                    // corta em fronteira de char: len-400 pode cair no
+                                    // meio de um multibyte e panicar (envenenaria o lock)
+                                    let mut cut = len - 400;
+                                    while cut < len && !tail.is_char_boundary(cut) {
+                                        cut += 1;
+                                    }
+                                    *tail = tail[cut..].to_string();
                                 }
                             }
                             *session.last_output.lock().unwrap() = Instant::now();
@@ -414,9 +433,13 @@ fn manager_loop(
         }
     }
 
-    // remove do registro ao terminar de vez
+    // remove do registro ao terminar de vez — só se ainda for ESTA sessão
+    // (um id reutilizado pode ter substituído o Arc no mapa)
     if let Some(sessions) = app.try_state::<Sessions>() {
-        sessions.0.lock().unwrap().remove(&id);
+        let mut map = sessions.0.lock().unwrap();
+        if map.get(&id).is_some_and(|s| Arc::ptr_eq(s, &session)) {
+            map.remove(&id);
+        }
     }
 }
 
@@ -442,7 +465,16 @@ fn start_session(
         last_output: Mutex::new(Instant::now()),
         last_input: Mutex::new(Instant::now()),
     });
-    sessions.0.lock().unwrap().insert(id.clone(), session.clone());
+    {
+        // rejeita id duplicado: sobrescrever o Arc deixaria a thread anterior
+        // órfã (ssh/PTY vivos) e a limpeza dela apagaria a entrada nova do mapa
+        let mut map = sessions.0.lock().unwrap();
+        if map.contains_key(&id) {
+            eprintln!("[session {id}] já existe — abertura duplicada ignorada");
+            return;
+        }
+        map.insert(id.clone(), session.clone());
+    }
     std::thread::spawn(move || manager_loop(app, id, session, host, params));
 }
 
@@ -588,4 +620,31 @@ fn get(sessions: &State<'_, Sessions>, id: &str) -> Result<Arc<Session>, String>
         .get(id)
         .cloned()
         .ok_or_else(|| format!("sessão desconhecida: {id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{looks_like_prompt, strip_ansi};
+
+    #[test]
+    fn strip_ansi_preserva_multibyte() {
+        // CSI colorindo um prompt com `❯` (multibyte): a cor some, o char fica
+        let s = "\x1b[38;2;224;161;94m❯\x1b[0m ";
+        assert_eq!(strip_ansi(s), "❯ ");
+    }
+
+    #[test]
+    fn strip_ansi_remove_osc_e_acentos_sobrevivem() {
+        // OSC (título de janela) terminado por BEL + texto acentuado
+        let s = "\x1b]0;título\x07são cinco?";
+        assert_eq!(strip_ansi(s), "são cinco?");
+    }
+
+    #[test]
+    fn prompt_needle_chevron_casa() {
+        // regressão: `❯` era mangleado p/ Latin-1 e a needle nunca casava
+        assert!(looks_like_prompt("\x1b[32m❯\x1b[0m"));
+        assert!(looks_like_prompt("Overwrite? "));
+        assert!(!looks_like_prompt("user@host:~$ "));
+    }
 }

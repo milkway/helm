@@ -198,24 +198,28 @@ fn snapshot(vpn: &Vpn) -> Vec<VpnProfile> {
 /// Garante que o perfil esteja conectado (bloqueante, com poll até CONNECTED).
 /// Chamado pelo manager antes do SSH. Registra o uso (refcount++).
 pub fn acquire(app: &AppHandle, vpn: &Vpn, profile: &str) -> Result<(), String> {
-    *vpn.refs.lock().unwrap().entry(profile.to_string()).or_insert(0) += 1;
-
-    if backend_state(profile)? == "connected" {
+    // NÃO registra o uso ainda: se a conexão falhar, o manager faz `return` sem
+    // chamar `release`, então o refcount ficaria preso em 1 para sempre.
+    // Incrementa só depois de confirmar CONNECTED.
+    if backend_state(profile)? != "connected" {
+        backend_connect(profile)?;
         emit_status(app, &snapshot(vpn));
-        return Ok(());
-    }
-    backend_connect(profile)?;
-    emit_status(app, &snapshot(vpn));
 
-    let deadline = Instant::now() + Duration::from_secs(45);
-    while Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(600));
-        if backend_state(profile)? == "connected" {
-            emit_status(app, &snapshot(vpn));
-            return Ok(());
+        let deadline = Instant::now() + Duration::from_secs(45);
+        loop {
+            std::thread::sleep(Duration::from_millis(600));
+            if backend_state(profile)? == "connected" {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("VPN '{profile}' não conectou em 45s"));
+            }
         }
     }
-    Err(format!("VPN '{profile}' não conectou em 45s"))
+
+    *vpn.refs.lock().unwrap().entry(profile.to_string()).or_insert(0) += 1;
+    emit_status(app, &snapshot(vpn));
+    Ok(())
 }
 
 /// Libera o uso do perfil (refcount--); desconecta se zerou e auto está ligado.
