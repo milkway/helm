@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useVaultStore, type CredMeta } from "../stores/vault";
 import { PasswordField, Toggle } from "./fields";
 import { useT } from "../i18n";
@@ -21,12 +21,20 @@ function CredRow({ cred }: { cred: CredMeta }) {
   const remove = useVaultStore((s) => s.remove);
   const [secret, setSecret] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // limpa o timer ao desmontar: senão a closure segura o segredo revelado
+  // (e agenda um setState) por até 10s depois de o modal fechar
+  useEffect(() => () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+  }, []);
 
   const isKey = cred.kind === "ssh_key";
   const badge = isKey ? (cred.algo ?? "key") : (cred.scope ?? "senha");
   const noSecretNote = isKey ? t("vault.noPassphrase") : t("vault.nopasswd");
 
   const doReveal = () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
     if (secret) {
       setSecret(null);
       return;
@@ -34,7 +42,7 @@ function CredRow({ cred }: { cred: CredMeta }) {
     void reveal(cred.id)
       .then((s) => {
         setSecret(s);
-        setTimeout(() => setSecret(null), 10_000);
+        hideTimer.current = setTimeout(() => setSecret(null), 10_000);
       })
       .catch(() => {});
   };

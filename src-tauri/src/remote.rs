@@ -9,6 +9,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::Instant;
 use tauri::State;
+use zeroize::Zeroizing;
 
 use crate::db::{self, Db};
 use crate::vault::{self, Vault};
@@ -36,15 +37,55 @@ fn target_of(user: &Option<String>, host: &str) -> Result<String, String> {
     })
 }
 
-/// Caminho do socket de multiplexação para um alvo. Curto (limite ~104
-/// chars para sockets unix no macOS) e estável por alvo+porta.
-fn control_path(target: &str, port: Option<u16>) -> std::path::PathBuf {
+fn fnv1a(seed: &[u8]) -> u64 {
     let mut hash: u64 = 1469598103934665603; // FNV-1a
-    for b in target.bytes().chain(port.unwrap_or(22).to_le_bytes()) {
-        hash ^= b as u64;
+    for b in seed {
+        hash ^= *b as u64;
         hash = hash.wrapping_mul(1099511628211);
     }
-    std::env::temp_dir().join(format!("helm-ssh-{hash:016x}"))
+    hash
+}
+
+/// Diretório 0700 para os sockets de ControlMaster, fora do `/tmp` mundialmente
+/// acessível. Namespaced por usuário (hash do HOME). Se não der para garantir um
+/// diretório privado nosso, cai no `temp_dir` (comportamento antigo, sem regressão).
+fn control_dir() -> std::path::PathBuf {
+    let base = std::env::temp_dir();
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    let dir = base.join(format!("helm-{:016x}", fnv1a(home.as_encoded_bytes())));
+    if ensure_private_dir(&dir) {
+        dir
+    } else {
+        base
+    }
+}
+
+#[cfg(unix)]
+fn ensure_private_dir(dir: &std::path::Path) -> bool {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => true, // criado por nós com 0700
+        // já existe: só confia se for um DIRETÓRIO 0700 (não symlink, não
+        // afrouxado) — senão outro usuário pode tê-lo plantado
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => std::fs::symlink_metadata(dir)
+            .map(|m| m.is_dir() && (m.permissions().mode() & 0o777) == 0o700)
+            .unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn ensure_private_dir(dir: &std::path::Path) -> bool {
+    std::fs::create_dir_all(dir).is_ok()
+}
+
+/// Caminho do socket de multiplexação para um alvo. Curto (limite ~104
+/// chars para sockets unix no macOS) e estável por alvo+porta. O nome-base é só
+/// o hash (o diretório privado já separa por usuário).
+fn control_path(target: &str, port: Option<u16>) -> std::path::PathBuf {
+    let mut seed = target.as_bytes().to_vec();
+    seed.extend_from_slice(&port.unwrap_or(22).to_le_bytes());
+    control_dir().join(format!("{:016x}", fnv1a(&seed)))
 }
 
 /// ssh não-interativo (sem PTY): chaves/agent/config apenas.
@@ -180,17 +221,18 @@ pub async fn install_tmux(
     let install = install_command(&pkg_manager)
         .ok_or_else(|| format!("package manager não suportado: {pkg_manager}"))?;
 
-    // resolve a senha ANTES do spawn_blocking (State não atravessa threads)
-    let password: Option<String> = match (&auth.credential_id, &auth.password) {
+    // resolve a senha ANTES do spawn_blocking (State não atravessa threads).
+    // Zeroizing zera a memória da senha ao sair do escopo (fim do closure).
+    let password: Option<Zeroizing<String>> = match (&auth.credential_id, &auth.password) {
         (Some(cred_id), _) => {
             // NOPASSWD (só-metadados) → sem senha; senão busca no keyring
             match vault::get_secret(&db, &vault, cred_id) {
-                Ok(secret) => Some(secret),
+                Ok(secret) => Some(Zeroizing::new(secret)),
                 Err(e) if e.contains("No matching entry") => None,
                 Err(e) => return Err(e),
             }
         }
-        (None, Some(pwd)) if !pwd.is_empty() => Some(pwd.clone()),
+        (None, Some(pwd)) if !pwd.is_empty() => Some(Zeroizing::new(pwd.clone())),
         _ => None,
     };
 

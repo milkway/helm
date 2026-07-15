@@ -89,7 +89,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
 }));
 
 // estado ao vivo (auto-lock dispara no Rust)
-void listen<VaultStatus>("vault-status", (event) => {
+const unlistenStatus = listen<VaultStatus>("vault-status", (event) => {
   const { locked, count } = event.payload;
   useVaultStore.setState((s) => ({
     locked,
@@ -97,6 +97,11 @@ void listen<VaultStatus>("vault-status", (event) => {
     creds: locked ? [] : s.creds,
   }));
 });
+
+// HMR: sem isto, cada reload do módulo empilha um listener duplicado
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => void unlistenStatus.then((un) => un()));
+}
 
 // estado inicial
 void useVaultStore.getState().refresh();
