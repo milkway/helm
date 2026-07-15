@@ -1,6 +1,6 @@
 # Helm
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21303523.svg)](https://doi.org/10.5281/zenodo.21303523)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21303522.svg)](https://doi.org/10.5281/zenodo.21303522)
 [![Release](https://img.shields.io/github/v/release/milkway/helm)](https://github.com/milkway/helm/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-e0a15e.svg)](LICENSE)
 
@@ -63,7 +63,7 @@ npm run tauri dev
 
 ## Citation
 
-If this software is useful in your work, please cite it via [`CITATION.cff`](CITATION.cff) or by the DOI **[10.5281/zenodo.21303523](https://doi.org/10.5281/zenodo.21303523)**.
+If this software is useful in your work, please cite it via [`CITATION.cff`](CITATION.cff) or by the DOI **[10.5281/zenodo.21303522](https://doi.org/10.5281/zenodo.21303522)** (concept DOI — always resolves to the latest version; each release also has its own version DOI).
 
 ## License
 
