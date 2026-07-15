@@ -215,8 +215,10 @@ async function createEntry(
   try {
     await openSshSession(ptyId, hostId, term.cols || 80, term.rows || 24, params ?? undefined);
   } catch (err) {
-    // host caído etc.: libera listeners/terminal/DOM em vez de vazá-los
-    setStatus(uiId, "exited");
+    // falha ao abrir (ex.: host sumiu do DB): libera listeners/terminal/DOM em
+    // vez de vazá-los; status "error" mostra o overlay com retry (o terminal,
+    // que antes exibia o texto do erro, é descartado aqui)
+    setStatus(uiId, "error");
     cleanup();
     throw err;
   }
