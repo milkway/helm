@@ -7,6 +7,7 @@ Gerenciador desktop de terminais SSH (macOS + Linux). Tauri 2 + React 19 + xterm
 - **Dev:** `npm install` && `npm run tauri dev` (janela nativa; front em `localhost:1420`).
 - **Typecheck (SEMPRE antes de relançar):** `npx tsc --noEmit`. O Vite **não** faz checagem de tipos — imports/erros só aparecem em runtime (ex.: `useState` esquecido → tela preta). Rode o `tsc` antes de qualquer relançamento do dev.
 - **Rust:** `cd src-tauri && cargo check` / `cargo clippy --all-targets -- -D warnings` (o CI usa `-D warnings`).
+- **Testes:** `cd src-tauri && cargo test` (existem desde a v0.2.1: `strip_ansi`/`looks_like_prompt` em `manager.rs`, migrações em `db.rs`). Ainda não há testes no front.
 - **Build app:** `npm run tauri build` (.dmg em `src-tauri/target/release/bundle/`).
 - **Build .deb:** `scripts/build-deb-remote.sh` (SSH na máquina `prompt`, Ubuntu 22.04) ou `scripts/build-deb.sh` (Docker).
 - **Site:** `cd site && npm install && npm run build`.
@@ -28,9 +29,10 @@ Gerenciador desktop de terminais SSH (macOS + Linux). Tauri 2 + React 19 + xterm
 
 ## Release / distribuição
 
-- Bump de versão em 4 lugares: `package.json`, `src-tauri/Cargo.toml` (+ `Cargo.lock`), `src-tauri/tauri.conf.json`, `CITATION.cff`.
+- Bump de versão em 4 lugares: `package.json`, `src-tauri/Cargo.toml` (+ `Cargo.lock` — rode `cargo check` p/ atualizar), `src-tauri/tauri.conf.json`, `CITATION.cff` (+ `date-released`). Faça o bump numa branch/PR (não commite direto no `main`).
 - Tag `vX.Y.Z` → `release.yml` gera `.dmg` (macOS aarch64 + x64) e `.deb` (Ubuntu 22.04) num release **draft**. Publicar é manual (e dispara o DOI do Zenodo).
-- DOI (Zenodo) e site (`milkway.github.io/helm`, deploy via `pages.yml`) documentados no README.
+- **DOI (Zenodo):** o badge e a citação do README usam o **concept DOI** `10.5281/zenodo.21303522` (segue sempre a última versão — NÃO mudar a cada release). O `CITATION.cff` usa o DOI **da versão** no campo `doi:` (ex.: v0.2.1 = `21380404`), pego em `https://zenodo.org/api/records/21303522/versions/latest`. Zenodo cunha sozinho via webhook ao publicar o release. (Até a v0.2.0 o repo citava por engano o DOI da v0.1.0 em todo lugar — badge preso; corrigido na v0.2.1.)
+- Site (`milkway.github.io/helm`) faz deploy via `pages.yml` ao empurrar em `site/`.
 
 ## Instalação do bundle (macOS)
 
