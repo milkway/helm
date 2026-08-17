@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -43,7 +43,9 @@ pub struct Session {
     connected: AtomicBool,
     attention: AtomicBool,
     sudo_prompt: AtomicBool,
-    sudo_dismissed: AtomicBool,
+    sudo_retry_generation: AtomicU64,
+    sudo_dismissed_signature: Mutex<Option<String>>,
+    sudo_emitted_context: Mutex<String>,
     sudo_credential_id: Option<String>,
     output_tail: Mutex<String>,
     last_output: Mutex<Instant>,
@@ -123,12 +125,14 @@ fn set_sudo_prompt(
 ) {
     let active = active && session.sudo_credential_id.is_some();
     let was = session.sudo_prompt.swap(active, Ordering::Relaxed);
-    if was != active {
-        let context = if active {
-            context.to_string()
-        } else {
-            String::new()
-        };
+    let context = if active {
+        context.to_string()
+    } else {
+        String::new()
+    };
+    let mut emitted_context = session.sudo_emitted_context.lock().unwrap();
+    if was != active || *emitted_context != context {
+        *emitted_context = context.clone();
         let _ = app.emit(
             "sudo-prompt",
             SudoPromptPayload {
@@ -197,24 +201,53 @@ fn looks_like_prompt(tail: &str) -> bool {
         "password:", "passphrase", "password for",
         "do you want", "are you sure", "proceed?", "continue?",
         "overwrite?", "confirm", "press enter", "❯",
-        "always allow", "allow once", "1. yes",
         "aguardando", "waiting for input",
     ];
-    NEEDLES.iter().any(|n| low.contains(n))
+    if NEEDLES.iter().any(|n| low.contains(n)) {
+        return true;
+    }
+
+    const MENU_NEEDLES: &[&str] = &["always allow", "allow once", "1. yes"];
+    clean
+        .split(['\r', '\n'])
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .rev()
+        .take(3)
+        .any(|line| {
+            let line = line.to_lowercase();
+            MENU_NEEDLES.iter().any(|needle| line.contains(needle))
+        })
 }
 
-/// Prompt ativo do sudo padrão. Só considera a última linha não-vazia da
-/// cauda, para não reativar um prompt antigo depois que o comando continuou.
+const SUDO_PROMPT_PREFIXES: &[&str] = &[
+    "[sudo] password for ",
+    "[sudo] senha para ",
+    "[sudo] contraseña para ",
+    "[sudo] mot de passe de ",
+];
+
+/// Prompt ativo do sudo padrão. CR também separa segmentos porque aplicações
+/// de terminal podem redesenhar sem LF. O prompt precisa estar no último
+/// segmento não-vazio; texto colado depois de `:` por CUP (status do tmux) é
+/// tolerado, mas qualquer output em uma linha/segmento posterior o invalida.
 fn is_active_sudo_prompt(tail: &str) -> bool {
     let clean = strip_ansi(tail);
     let last = clean
-        .lines()
+        .split(['\r', '\n'])
         .rev()
         .find(|line| !line.trim().is_empty())
         .unwrap_or("")
         .trim_end();
-    last.strip_prefix("[sudo] password for ")
-        .and_then(|rest| rest.strip_suffix(':'))
+    let low = last.to_lowercase();
+    SUDO_PROMPT_PREFIXES
+        .iter()
+        .filter_map(|prefix| low.rfind(prefix).map(|index| (index, prefix.len())))
+        .max_by_key(|(index, _)| *index)
+        .and_then(|(index, prefix_len)| {
+            let rest = &low[index + prefix_len..];
+            rest.find(':').map(|colon| rest[..colon].trim())
+        })
         .is_some_and(|user| !user.is_empty())
 }
 
@@ -225,7 +258,7 @@ fn sudo_prompt_context(tail: &str) -> String {
 
     let clean = strip_ansi(tail);
     let lines: Vec<&str> = clean
-        .lines()
+        .split(['\r', '\n'])
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect();
@@ -237,6 +270,38 @@ fn sudo_prompt_context(tail: &str) -> String {
         let keep = MAX_CONTEXT_CHARS - 1;
         format!("…{}", context.chars().skip(char_count - keep).collect::<String>())
     }
+}
+
+fn sudo_retry_count(tail: &str) -> usize {
+    strip_ansi(tail)
+        .to_lowercase()
+        .match_indices("sorry, try again")
+        .count()
+}
+
+fn sudo_prompt_signature(context: &str, retry_generation: u64) -> String {
+    format!("{retry_generation}\0{context}")
+}
+
+fn sudo_prompt_state(
+    tail: &str,
+    retry_generation: u64,
+    dismissed_signature: &mut Option<String>,
+) -> (bool, String) {
+    if !is_active_sudo_prompt(tail) {
+        *dismissed_signature = None;
+        return (false, String::new());
+    }
+
+    let context = sudo_prompt_context(tail);
+    let signature = sudo_prompt_signature(&context, retry_generation);
+    if dismissed_signature
+        .as_ref()
+        .is_some_and(|dismissed| dismissed != &signature)
+    {
+        *dismissed_signature = None;
+    }
+    (dismissed_signature.is_none(), context)
 }
 
 fn emit_status(app: &AppHandle, id: &str, status: &str, attempt: Option<u32>, delay: Option<u64>) {
@@ -645,7 +710,15 @@ fn manager_loop(
                             // rastreia a cauda do output para a heurística de atenção
                             {
                                 let mut tail = session.output_tail.lock().unwrap();
+                                let retries_before = sudo_retry_count(&tail);
                                 tail.push_str(&String::from_utf8_lossy(&buf[..n]));
+                                let retries_after = sudo_retry_count(&tail);
+                                if retries_after > retries_before {
+                                    session.sudo_retry_generation.fetch_add(
+                                        (retries_after - retries_before) as u64,
+                                        Ordering::Relaxed,
+                                    );
+                                }
                                 let len = tail.len();
                                 if len > 400 {
                                     // corta em fronteira de char: len-400 pode cair no
@@ -656,17 +729,13 @@ fn manager_loop(
                                     }
                                     *tail = tail[cut..].to_string();
                                 }
-                                let sudo_active = is_active_sudo_prompt(&tail);
-                                if !sudo_active {
-                                    session.sudo_dismissed.store(false, Ordering::Relaxed);
-                                }
-                                let visible = sudo_active
-                                    && !session.sudo_dismissed.load(Ordering::Relaxed);
-                                let context = if visible {
-                                    sudo_prompt_context(&tail)
-                                } else {
-                                    String::new()
-                                };
+                                let mut dismissed = session.sudo_dismissed_signature.lock().unwrap();
+                                let (visible, context) = sudo_prompt_state(
+                                    &tail,
+                                    session.sudo_retry_generation.load(Ordering::Relaxed),
+                                    &mut dismissed,
+                                );
+                                drop(dismissed);
                                 set_sudo_prompt(&app, &session, &id, visible, &context);
                             }
                             *session.last_output.lock().unwrap() = Instant::now();
@@ -686,7 +755,7 @@ fn manager_loop(
                 set_attention(&app, &session, &id, false, None);
                 {
                     let _tail = session.output_tail.lock().unwrap();
-                    session.sudo_dismissed.store(false, Ordering::Relaxed);
+                    *session.sudo_dismissed_signature.lock().unwrap() = None;
                     set_sudo_prompt(&app, &session, &id, false, "");
                 }
                 *session.io.lock().unwrap() = None;
@@ -838,7 +907,9 @@ fn start_session(
         connected: AtomicBool::new(false),
         attention: AtomicBool::new(false),
         sudo_prompt: AtomicBool::new(false),
-        sudo_dismissed: AtomicBool::new(false),
+        sudo_retry_generation: AtomicU64::new(0),
+        sudo_dismissed_signature: Mutex::new(None),
+        sudo_emitted_context: Mutex::new(String::new()),
         sudo_credential_id: auth.sudo_credential_id,
         output_tail: Mutex::new(String::new()),
         last_output: Mutex::new(Instant::now()),
@@ -858,16 +929,22 @@ fn start_session(
 }
 
 fn resolve_sudo_credential(db: &State<'_, Db>, host: &Host) -> Option<String> {
-    let credential_id = host.credential_ref.as_deref()?;
-    let eligible = {
-        let conn = db.0.lock().unwrap();
-        db::has_sudo_password_credential(&conn, credential_id)
-    };
-    match eligible {
-        Ok(true) => Some(credential_id.to_string()),
-        Ok(false) => None,
+    let conn = db.0.lock().unwrap();
+    if let Some(credential_id) = host.credential_ref.as_deref() {
+        match db::has_sudo_password_credential(&conn, credential_id) {
+            Ok(true) => return Some(credential_id.to_string()),
+            Ok(false) => {}
+            Err(e) => {
+                eprintln!("[session] falha ao consultar credencial sudo ({e})");
+                return None;
+            }
+        }
+    }
+
+    match db::find_sudo_password_credential_for_host(&conn, host) {
+        Ok(credential_id) => credential_id,
         Err(e) => {
-            eprintln!("[session] falha ao consultar credencial sudo ({e})");
+            eprintln!("[session] falha ao procurar credencial sudo dedicada ({e})");
             None
         }
     }
@@ -963,7 +1040,7 @@ pub fn authorize_sudo(
     writer.write_all(b"\n").map_err(|e| e.to_string())?;
     writer.flush().map_err(|e| e.to_string())?;
     tail.clear();
-    session.sudo_dismissed.store(false, Ordering::Relaxed);
+    *session.sudo_dismissed_signature.lock().unwrap() = None;
     set_sudo_prompt(&app, &session, &id, false, "");
     drop(tail);
 
@@ -980,9 +1057,14 @@ pub fn dismiss_sudo_prompt(
 ) -> Result<(), String> {
     let session = get(&sessions, &id)?;
     let tail = session.output_tail.lock().unwrap();
-    session
-        .sudo_dismissed
-        .store(is_active_sudo_prompt(&tail), Ordering::Relaxed);
+    *session.sudo_dismissed_signature.lock().unwrap() = if is_active_sudo_prompt(&tail) {
+        Some(sudo_prompt_signature(
+            &sudo_prompt_context(&tail),
+            session.sudo_retry_generation.load(Ordering::Relaxed),
+        ))
+    } else {
+        None
+    };
     set_sudo_prompt(&app, &session, &id, false, "");
     Ok(())
 }
@@ -998,13 +1080,24 @@ pub fn write_stdin(
     // tecla do usuário → registra input e limpa atenção
     *session.last_input.lock().unwrap() = Instant::now();
     set_attention(&app, &session, &id, false, None);
+    let mut tail = if data.contains('\r') || data.contains('\n') {
+        let mut tail = session.output_tail.lock().unwrap();
+        tail.clear();
+        *session.sudo_dismissed_signature.lock().unwrap() = None;
+        set_sudo_prompt(&app, &session, &id, false, "");
+        Some(tail)
+    } else {
+        None
+    };
     // O lock de `io` também protege killer/master; uma escrita bloqueante não
     // pode impedir close_session de alcançar o killer. O mutex exclusivo do
     // writer mantém write_all + flush serializados e, portanto, em ordem.
     let mut writer = session.writer.lock().unwrap();
     let writer = writer.as_mut().ok_or("sessão sem PTY ativo")?;
     writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
-    writer.flush().map_err(|e| e.to_string())
+    writer.flush().map_err(|e| e.to_string())?;
+    drop(tail.take());
+    Ok(())
 }
 
 const ATTENTION_SETTLE: Duration = Duration::from_secs(2);
@@ -1180,7 +1273,7 @@ fn get(sessions: &State<'_, Sessions>, id: &str) -> Result<Arc<Session>, String>
 mod tests {
     use super::{
         agent_binary, classify_exit_status, is_active_sudo_prompt, looks_like_prompt, strip_ansi,
-        sudo_prompt_context, ExitKind,
+        sudo_prompt_context, sudo_prompt_signature, sudo_prompt_state, sudo_retry_count, ExitKind,
     };
     use portable_pty::ExitStatus;
 
@@ -1214,6 +1307,12 @@ mod tests {
         assert!(looks_like_prompt(claude));
         assert!(looks_like_prompt(codex));
         assert!(looks_like_prompt("Claude Code permission\n  1. Yes\n  2. No"));
+        assert!(!looks_like_prompt(
+            "Documentation example: 1. Yes\nline two\nline three\nline four"
+        ));
+        assert!(!looks_like_prompt(
+            "The options include always allow and allow once.\nnotes\nmore notes\nend"
+        ));
         assert!(!looks_like_prompt("Working (12s · esc to interrupt)"));
     }
 
@@ -1221,11 +1320,52 @@ mod tests {
     fn reconhece_apenas_prompt_sudo_ativo_no_fim_da_cauda() {
         assert!(is_active_sudo_prompt("[sudo] password for deploy:"));
         assert!(is_active_sudo_prompt("output\n[sudo] password for deploy:   "));
+        assert!(is_active_sudo_prompt(
+            "[sudo] password for deploy:\x1b[1;1H[0] 0:bash* 12:34"
+        ));
         assert!(!is_active_sudo_prompt(
             "[sudo] password for deploy:\nserviço reiniciado"
         ));
+        assert!(!is_active_sudo_prompt(
+            "[sudo] password for deploy:\rserviço reiniciado"
+        ));
         assert!(!is_active_sudo_prompt("Password:"));
-        assert!(!is_active_sudo_prompt(" [sudo] password for deploy:"));
+        assert!(is_active_sudo_prompt("status apagado [sudo] password for deploy:"));
+    }
+
+    #[test]
+    fn reconhece_prompts_sudo_localizados_do_app() {
+        assert!(is_active_sudo_prompt("[sudo] password for deploy:"));
+        assert!(is_active_sudo_prompt("[sudo] senha para deploy:"));
+        assert!(is_active_sudo_prompt("[sudo] contraseña para deploy:"));
+        assert!(is_active_sudo_prompt("[sudo] Mot de passe de deploy :"));
+        assert!(!is_active_sudo_prompt("Password:"));
+    }
+
+    #[test]
+    fn prompt_dispensado_reaparece_com_nova_tentativa_e_contexto() {
+        let first = "sudo systemctl restart api\r\n[sudo] password for deploy:";
+        let mut dismissed = Some(sudo_prompt_signature(&sudo_prompt_context(first), 0));
+        let (visible, _) = sudo_prompt_state(first, 0, &mut dismissed);
+        assert!(!visible);
+
+        let retry = concat!(
+            "sudo systemctl restart api\r\n[sudo] password for deploy:\r\n",
+            "Sorry, try again.\r\n[sudo] password for deploy:"
+        );
+        let (visible, context) = sudo_prompt_state(retry, 1, &mut dismissed);
+        assert!(visible);
+        assert!(dismissed.is_none());
+        assert!(context.contains("Sorry, try again."));
+
+        dismissed = Some(sudo_prompt_signature(&context, 1));
+        let (visible, _) = sudo_prompt_state(retry, 2, &mut dismissed);
+        assert!(visible);
+
+        let mut split_retry = String::from("Sorry, tr");
+        let before = sudo_retry_count(&split_retry);
+        split_retry.push_str("y again.\r\n[sudo] password for deploy:");
+        assert_eq!(sudo_retry_count(&split_retry) - before, 1);
     }
 
     #[test]

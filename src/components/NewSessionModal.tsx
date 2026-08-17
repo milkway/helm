@@ -2,13 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { detectRemote, type RemoteInfo } from "../lib/ipc";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
-import { useUiStore } from "../stores/ui";
+import { useUiStore, type Agent } from "../stores/ui";
 import { statusColor, tmuxSessionName } from "../types";
 import { useT } from "../i18n";
 
 type Mode = "shell" | "tmux" | "clmux";
-type Agent = "claude" | "codex";
-
 /** Nova sessão (projeto) — design 1c. */
 export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
   const t = useT();
@@ -16,27 +14,28 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
   const hosts = useHostsStore((s) => s.hosts);
   const sessions = useSessionsStore((s) => s.sessions);
   const open = useSessionsStore((s) => s.open);
+  const defaultAgent = useUiStore((s) => s.defaultAgent);
+  const setDefaultAgent = useUiStore((s) => s.setDefaultAgent);
 
   const [hostId, setHostId] = useState(presetHostId ?? hosts[0]?.id ?? "");
   const [project, setProject] = useState("");
   const [dir, setDir] = useState("");
   const [mode, setMode] = useState<Mode>("clmux");
-  const [agent, setAgent] = useState<Agent>("claude");
+  const [agent, setAgent] = useState<Agent>(defaultAgent);
+  const [rememberAgent, setRememberAgent] = useState(false);
   const [remoteInfo, setRemoteInfo] = useState<RemoteInfo | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setRemoteInfo(null);
-    if (!hostId) {
-      return () => { cancelled = true; };
-    }
+    if (!hostId || mode !== "clmux") return;
     void detectRemote(hostId)
       .then((info) => {
         if (!cancelled) setRemoteInfo(info);
       })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [hostId]);
+  }, [hostId, mode]);
 
   const host = hosts.find((h) => h.id === hostId);
   const hostSession = sessions.find((s) => s.hostId === hostId);
@@ -59,6 +58,7 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
 
   const submit = () => {
     if (!valid) return;
+    if (mode === "clmux" && rememberAgent) setDefaultAgent(agent);
     open(hostId, {
       mode,
       sessionName: mode === "shell" ? undefined : sessionName,
@@ -139,6 +139,16 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
                     <div className="hxm__radio-body">
                       <div className="hxm__radio-title">{m.title}</div>
                       <div className="hxm__radio-sub">{m.sub}</div>
+                      {m.id === "clmux" && (
+                        <label className="hxm__radio-sub" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={rememberAgent}
+                            onChange={(e) => setRememberAgent(e.target.checked)}
+                          />{" "}
+                          {t("ns.rememberAgent")}
+                        </label>
+                      )}
                     </div>
                     {m.id === "clmux" && (
                       <div

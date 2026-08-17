@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { authorizeSudo, dismissSudoPrompt, retrySession } from "../lib/ipc";
 import { reattachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
@@ -136,6 +136,11 @@ function SudoToast({ session }: { session: SessionInfo }) {
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setConfirming(false);
+    setError(null);
+  }, [session.sudoContext]);
 
   const authorize = async () => {
     if (!session.ptyId || busy) return;

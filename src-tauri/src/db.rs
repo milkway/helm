@@ -134,6 +134,52 @@ pub(crate) fn has_sudo_password_credential(
     )
 }
 
+pub(crate) fn find_sudo_password_credential_for_host(
+    conn: &Connection,
+    host: &Host,
+) -> rusqlite::Result<Option<String>> {
+    let mut identifiers = vec![
+        host.name.trim().to_lowercase(),
+        host.host.trim().to_lowercase(),
+    ];
+    if let Some(user) = host.user.as_deref().filter(|user| !user.trim().is_empty()) {
+        identifiers.push(format!("{}@{}", user.trim(), host.host.trim()).to_lowercase());
+    }
+    identifiers.retain(|identifier| !identifier.is_empty());
+    identifiers.sort();
+    identifiers.dedup();
+
+    let mut stmt = conn.prepare(
+        "SELECT id, label FROM credentials_meta
+         WHERE kind = 'password'
+           AND LOWER(COALESCE(scope, '')) LIKE '%sudo%'
+           AND has_secret = 1",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let candidates = rows
+        .into_iter()
+        .filter(|(_, label)| {
+            let label = label.trim().to_lowercase();
+            let Some(target) = label.strip_prefix("sudo · ") else {
+                return false;
+            };
+            identifiers
+                .iter()
+                .any(|identifier| target.contains(identifier))
+        })
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>();
+
+    Ok(match candidates.as_slice() {
+        [id] => Some(id.clone()),
+        _ => None,
+    })
+}
+
 #[tauri::command]
 pub fn host_has_ssh_credential(db: State<'_, Db>, host_id: String) -> Result<bool, String> {
     let conn = db.0.lock().unwrap();
@@ -261,7 +307,8 @@ pub fn delete_host(db: State<'_, Db>, id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        has_ssh_password_credential, has_sudo_password_credential, migrate, MIGRATIONS,
+        find_sudo_password_credential_for_host, has_ssh_password_credential,
+        has_sudo_password_credential, migrate, Host, MIGRATIONS,
     };
     use rusqlite::Connection;
 
@@ -336,5 +383,48 @@ mod tests {
         assert!(!has_sudo_password_credential(&conn, "empty").unwrap());
         assert!(!has_sudo_password_credential(&conn, "key").unwrap());
         assert!(!has_sudo_password_credential(&conn, "missing").unwrap());
+    }
+
+    #[test]
+    fn encontra_credencial_sudo_dedicada_sem_adivinhar_ambiguidades() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO credentials_meta (id, kind, label, scope, has_secret) VALUES
+                ('atlas', 'password', 'sudo · deploy@10.4.2.18', 'sudo', 1),
+                ('other', 'password', 'sudo · deploy@10.4.2.19', 'sudo', 1),
+                ('wrong-label', 'password', 'deploy@10.4.2.18', 'sudo', 1),
+                ('no-secret', 'password', 'sudo · atlas-api', 'sudo', 0),
+                ('ssh-only', 'password', 'sudo · atlas-api', 'ssh', 1);",
+        )
+        .unwrap();
+        let host = Host {
+            id: "host-atlas".into(),
+            name: "Atlas API".into(),
+            group: String::new(),
+            user: Some("deploy".into()),
+            host: "10.4.2.18".into(),
+            port: None,
+            credential_ref: None,
+            vpn_profile: None,
+            auto_reconnect: true,
+            auto_install_tmux: false,
+            auto_attach: true,
+            project_dir: None,
+            startup_mode: "shell".into(),
+        };
+
+        assert_eq!(
+            find_sudo_password_credential_for_host(&conn, &host).unwrap(),
+            Some("atlas".into())
+        );
+
+        conn.execute(
+            "INSERT INTO credentials_meta (id, kind, label, scope, has_secret)
+             VALUES ('atlas-duplicate', 'password', 'sudo · Atlas API', 'sudo', 1)",
+            [],
+        )
+        .unwrap();
+        assert_eq!(find_sudo_password_credential_for_host(&conn, &host).unwrap(), None);
     }
 }

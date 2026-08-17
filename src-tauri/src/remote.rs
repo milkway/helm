@@ -239,7 +239,7 @@ pub struct RemoteInfo {
     pub codex: Option<String>,
 }
 
-const DETECT_SCRIPT: &str = r#". /etc/os-release 2>/dev/null; echo "OS=${PRETTY_NAME:-$(uname -s)}"; tmux -V 2>/dev/null | sed 's/^/TMUX=/'; command -v claude >/dev/null 2>&1 && claude --version 2>/dev/null | head -1 | sed 's/^/CLAUDE=/'; command -v codex >/dev/null 2>&1 && codex --version 2>/dev/null | head -1 | sed 's/^/CODEX=/'; for pm in apt-get dnf yum pacman apk zypper; do command -v $pm >/dev/null 2>&1 && { echo "PM=$pm"; break; }; done"#;
+const DETECT_SCRIPT: &str = r#"export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$PATH"; [ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1; . /etc/os-release 2>/dev/null; echo "OS=${PRETTY_NAME:-$(uname -s)}"; tmux -V 2>/dev/null | sed 's/^/TMUX=/'; command -v claude 2>/dev/null | sed 's/^/CLAUDE=/'; command -v codex 2>/dev/null | sed 's/^/CODEX=/'; for pm in apt-get dnf yum pacman apk zypper; do command -v $pm >/dev/null 2>&1 && { echo "PM=$pm"; break; }; done"#;
 
 #[tauri::command]
 pub async fn detect_remote(db: State<'_, Db>, host_id: String) -> Result<RemoteInfo, String> {

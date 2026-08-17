@@ -23,6 +23,7 @@ export function Inspector() {
   const open = useSessionsStore((s) => s.open);
   const hosts = useHostsStore((s) => s.hosts);
   const openModal = useUiStore((s) => s.openModal);
+  const defaultAgent = useUiStore((s) => s.defaultAgent);
   const t = useT();
 
   // rerender periódico para o uptime andar
@@ -50,6 +51,7 @@ export function Inspector() {
   }
 
   const color = statusColor(session.status);
+  const agentLabel = defaultAgent === "codex" ? t("ns.codex") : t("ns.claude");
   const meta: { k: string; v: string }[] = [
     { k: t("in.host"), v: host.host },
     { k: t("in.user"), v: host.user ?? t("in.config") },
@@ -95,13 +97,16 @@ export function Inspector() {
                 mode: "clmux",
                 sessionName: tmuxSessionName(host.name),
                 projectDir: host.projectDir ?? undefined,
+                agent: defaultAgent,
               })
             }
           >
             <div className="clmux-card__icon">cl</div>
             <div className="card-body">
-              <div className="clmux-card__title">clmux → claude</div>
-              <div className="clmux-card__sub">{t("in.clmuxSub", { dir: host.projectDir ?? "~" })}</div>
+              <div className="clmux-card__title">{t("in.clmuxTitle", { agent: agentLabel })}</div>
+              <div className="clmux-card__sub">
+                {t("in.clmuxSub", { dir: host.projectDir ?? "~", agent: agentLabel })}
+              </div>
             </div>
           </div>
           {(() => {
