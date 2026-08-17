@@ -14,9 +14,11 @@ use base64::Engine;
 use portable_pty::CommandBuilder;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
+use zeroize::Zeroizing;
 
 use crate::db::{self, Db, Host};
 use crate::session::pty;
+use crate::vault::{self, Vault};
 
 const MAX_ATTEMPTS: u32 = 5;
 const ERROR_RETRY_SECS: u64 = 60;
@@ -27,6 +29,7 @@ const EXIT_STATUS_WAIT: Duration = Duration::from_secs(1);
 pub struct Session {
     #[allow(dead_code)] // usado nas fases de latência
     host_id: Option<String>,
+    askpass_secret: Option<Zeroizing<String>>,
     closed: AtomicBool,
     detached: AtomicBool,
     retry_now: AtomicBool,
@@ -233,7 +236,11 @@ fn remote_command(mode: &str, name: &str, dir: Option<&str>) -> Option<String> {
     }
 }
 
-fn build_command(host: Option<&Host>, params: Option<&SessionParams>) -> Result<CommandBuilder, String> {
+fn build_command(
+    host: Option<&Host>,
+    params: Option<&SessionParams>,
+    askpass_secret: Option<&str>,
+) -> Result<CommandBuilder, String> {
     match host {
         None => {
             let mut cmd = CommandBuilder::new(pty::default_shell());
@@ -263,6 +270,23 @@ fn build_command(host: Option<&Host>, params: Option<&SessionParams>) -> Result<
             cmd.arg("ServerAliveInterval=15");
             cmd.arg("-o");
             cmd.arg("ServerAliveCountMax=3");
+            if let Some(secret) = askpass_secret {
+                match std::env::current_exe() {
+                    Ok(helper) => {
+                        cmd.env("SSH_ASKPASS", helper);
+                        cmd.env("SSH_ASKPASS_REQUIRE", "force");
+                        cmd.env("HELM_ASKPASS_MODE", "1");
+                        cmd.env("HELM_ASKPASS_SECRET", secret);
+                        cmd.arg("-o");
+                        cmd.arg("NumberOfPasswordPrompts=1");
+                        cmd.arg("-o");
+                        cmd.arg("StrictHostKeyChecking=accept-new");
+                    }
+                    Err(_) => eprintln!(
+                        "[session] helper SSH_ASKPASS indisponível; usando autenticação interativa"
+                    ),
+                }
+            }
             if let Some(port) = host.port {
                 cmd.arg("-p");
                 cmd.arg(port.to_string());
@@ -357,7 +381,11 @@ fn manager_loop(
         }
 
         let (cols, rows) = *session.size.lock().unwrap();
-        let cmd = match build_command(host.as_ref(), params.as_ref()) {
+        let askpass_secret = session
+            .askpass_secret
+            .as_ref()
+            .map(|secret| secret.as_str());
+        let cmd = match build_command(host.as_ref(), params.as_ref(), askpass_secret) {
             Ok(cmd) => cmd,
             Err(e) => {
                 eprintln!("[session {id}] comando inválido: {e}");
@@ -544,9 +572,11 @@ fn start_session(
     cols: u16,
     rows: u16,
     params: Option<SessionParams>,
+    askpass_secret: Option<Zeroizing<String>>,
 ) {
     let session = Arc::new(Session {
         host_id: host.as_ref().map(|h| h.id.clone()),
+        askpass_secret,
         closed: AtomicBool::new(false),
         detached: AtomicBool::new(false),
         retry_now: AtomicBool::new(false),
@@ -572,12 +602,44 @@ fn start_session(
     std::thread::spawn(move || manager_loop(app, id, session, host, params));
 }
 
+fn resolve_ssh_password(
+    db: &State<'_, Db>,
+    vault: &State<'_, Vault>,
+    host: &Host,
+) -> Option<Zeroizing<String>> {
+    let credential_id = host.credential_ref.as_deref()?;
+    let eligible = {
+        let conn = db.0.lock().unwrap();
+        db::has_ssh_password_credential(&conn, credential_id)
+    };
+    match eligible {
+        Ok(true) => {}
+        // credencial só de sudo (sem escopo ssh) é configuração normal — sem aviso
+        Ok(false) => return None,
+        Err(e) => {
+            eprintln!("[session] falha ao consultar credencial SSH ({e}); usando autenticação interativa");
+            return None;
+        }
+    }
+
+    match vault::get_secret(db, vault, credential_id) {
+        Ok(secret) => Some(Zeroizing::new(secret)),
+        Err(_) => {
+            eprintln!(
+                "[session] cofre ou segredo SSH indisponível; usando autenticação interativa"
+            );
+            None
+        }
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // comando Tauri: injeções de State + params
 pub fn open_ssh_session(
     app: AppHandle,
     sessions: State<'_, Sessions>,
     db: State<'_, Db>,
+    vault: State<'_, Vault>,
     id: String,
     host_id: String,
     cols: u16,
@@ -585,7 +647,17 @@ pub fn open_ssh_session(
     params: Option<SessionParams>,
 ) -> Result<(), String> {
     let host = db::get_host(&db, &host_id)?;
-    start_session(app, &sessions, id, Some(host), cols, rows, params);
+    let askpass_secret = resolve_ssh_password(&db, &vault, &host);
+    start_session(
+        app,
+        &sessions,
+        id,
+        Some(host),
+        cols,
+        rows,
+        params,
+        askpass_secret,
+    );
     Ok(())
 }
 

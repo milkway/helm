@@ -20,6 +20,14 @@ export function isSudoCredential(cred: CredMeta): boolean {
   );
 }
 
+export function isSshPasswordCredential(cred: CredMeta): boolean {
+  return (
+    cred.kind === "password" &&
+    cred.hasSecret &&
+    (cred.scope ?? "").toLowerCase().includes("ssh")
+  );
+}
+
 interface VaultState {
   locked: boolean;
   count: number;

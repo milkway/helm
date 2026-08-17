@@ -23,7 +23,11 @@ import {
 import { useSessionsStore } from "../stores/sessions";
 import { useHostsStore } from "../stores/hosts";
 import { useUiStore } from "../stores/ui";
-import { isSudoCredential, useVaultStore } from "../stores/vault";
+import {
+  isSshPasswordCredential,
+  isSudoCredential,
+  useVaultStore,
+} from "../stores/vault";
 import { sessionUsesTmux, tmuxSessionName, type SessionStatus } from "../types";
 
 const THEME = {
@@ -180,6 +184,25 @@ export function ensureTerm(uiId: string, hostId: string): Promise<TermEntry> {
   return promise;
 }
 
+async function prepareSshPassword(hostId: string): Promise<void> {
+  const host = useHostsStore.getState().hosts.find((item) => item.id === hostId);
+  if (!host?.credentialRef) return;
+
+  const vault = useVaultStore.getState();
+  const credential = vault.creds.find((cred) => cred.id === host.credentialRef);
+  // Se a metadata já está em memória, não abra o cofre para uma
+  // credencial incompatível. Num início com o cofre bloqueado a lista ainda
+  // não foi carregada; o Rust fará a validação definitiva depois do unlock.
+  if (credential && !isSshPasswordCredential(credential)) return;
+  if (!credential && !vault.locked) return;
+
+  if (vault.locked) {
+    // unlock trata recusa/cancelamento sem lançar; a conexão segue e o ssh
+    // oferece digitação interativa quando o cofre continuar bloqueado.
+    await vault.unlock();
+  }
+}
+
 async function prepareTmux(uiId: string, hostId: string): Promise<boolean> {
   const host = useHostsStore.getState().hosts.find((item) => item.id === hostId);
   const session = useSessionsStore.getState().sessions.find((item) => item.id === uiId);
@@ -252,6 +275,7 @@ async function createEntry(
   abort: { aborted: boolean },
 ): Promise<TermEntry> {
   const setStatus = useSessionsStore.getState().setStatus;
+  await prepareSshPassword(hostId);
   if (!(await prepareTmux(uiId, hostId))) {
     setStatus(uiId, "error");
     throw new Error("tmux installation requires user action");

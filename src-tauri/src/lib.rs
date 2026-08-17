@@ -1,3 +1,4 @@
+pub mod askpass;
 mod db;
 mod remote;
 mod session;
