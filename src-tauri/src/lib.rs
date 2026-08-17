@@ -1,3 +1,4 @@
+pub mod askpass;
 mod db;
 mod remote;
 mod session;
@@ -10,8 +11,7 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
+    let app = tauri::Builder::default()
         .manage(manager::Sessions::default())
         .setup(|app| {
             let conn = db::open(app.handle()).map_err(std::io::Error::other)?;
@@ -24,7 +24,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            manager::open_local_session,
             manager::open_ssh_session,
             manager::write_stdin,
             manager::resize_pty,
@@ -34,6 +33,7 @@ pub fn run() {
             db::list_hosts,
             db::save_host,
             db::delete_host,
+            db::host_has_ssh_credential,
             db::get_pref,
             db::set_pref,
             vault::vault_status,
@@ -54,6 +54,18 @@ pub fn run() {
             vpn::vpn_set_auto_disconnect,
             vpn::vpn_get_auto_disconnect,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    let mut shutdown_started = false;
+    app.run(move |app, event| {
+        if !shutdown_started
+            && matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit)
+        {
+            shutdown_started = true;
+            if let Some(sessions) = app.try_state::<manager::Sessions>() {
+                manager::shutdown_sessions(&sessions, std::time::Duration::from_secs(2));
+            }
+        }
+    });
 }

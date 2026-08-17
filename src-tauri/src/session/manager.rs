@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -14,22 +15,29 @@ use base64::Engine;
 use portable_pty::CommandBuilder;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
+use zeroize::Zeroizing;
 
 use crate::db::{self, Db, Host};
 use crate::session::pty;
+use crate::vault::{self, Vault};
 
 const MAX_ATTEMPTS: u32 = 5;
 const ERROR_RETRY_SECS: u64 = 60;
-/// viveu menos que isto com output = tentativa falhada, não conexão real
-const MIN_STABLE_SECS: u64 = 5;
+/// Dez segundos filtram falhas de autenticação/handshake sem punir tanto links
+/// instáveis; quedas após isso reiniciam o backoff como uma conexão real.
+const MIN_STABLE_SECS: u64 = 10;
+const EXIT_STATUS_WAIT: Duration = Duration::from_secs(5);
 
 pub struct Session {
     #[allow(dead_code)] // usado nas fases de latência
     host_id: Option<String>,
+    askpass_secret: Option<Zeroizing<String>>,
+    askpass_disabled: AtomicBool,
     closed: AtomicBool,
     detached: AtomicBool,
     retry_now: AtomicBool,
     size: Mutex<(u16, u16)>,
+    writer: Mutex<Option<Box<dyn Write + Send>>>,
     io: Mutex<Option<Io>>,
     // detecção de atenção (Fase 8)
     connected: AtomicBool,
@@ -40,9 +48,19 @@ pub struct Session {
 }
 
 struct Io {
-    writer: Box<dyn Write + Send>,
     master: Box<dyn portable_pty::MasterPty + Send>,
     killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
+}
+
+struct AskpassAttempt {
+    helper: PathBuf,
+    secret_file: PathBuf,
+}
+
+impl Drop for AskpassAttempt {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.secret_file);
+    }
 }
 
 #[derive(Default)]
@@ -65,6 +83,8 @@ struct StatusPayload<'a> {
     attempt: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     delay_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<u32>,
 }
 
 #[derive(Clone, Serialize)]
@@ -146,6 +166,17 @@ fn looks_like_prompt(tail: &str) -> bool {
 }
 
 fn emit_status(app: &AppHandle, id: &str, status: &str, attempt: Option<u32>, delay: Option<u64>) {
+    emit_status_with_exit_code(app, id, status, attempt, delay, None);
+}
+
+fn emit_status_with_exit_code(
+    app: &AppHandle,
+    id: &str,
+    status: &str,
+    attempt: Option<u32>,
+    delay: Option<u64>,
+    exit_code: Option<u32>,
+) {
     let _ = app.emit(
         "session-status",
         StatusPayload {
@@ -153,8 +184,118 @@ fn emit_status(app: &AppHandle, id: &str, status: &str, attempt: Option<u32>, de
             status,
             attempt,
             delay_secs: delay,
+            exit_code,
         },
     );
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExitKind {
+    Clean,
+    Failure,
+    Unknown,
+}
+
+fn classify_exit_status(exit_status: Option<&portable_pty::ExitStatus>) -> ExitKind {
+    // portable-pty representa morte por sinal com código 1; o sinal precisa
+    // prevalecer sobre o código para que kill/OOM/sleep-wake reconectem.
+    match exit_status {
+        Some(status) if status.signal().is_some() => ExitKind::Failure,
+        Some(status) if status.exit_code() == 255 => ExitKind::Failure,
+        Some(_) => ExitKind::Clean,
+        None => ExitKind::Unknown,
+    }
+}
+
+fn askpass_session_tag(id: &str) -> u64 {
+    let mut hash = 1469598103934665603u64;
+    for byte in id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(1099511628211);
+    }
+    hash
+}
+
+#[cfg(unix)]
+fn ensure_private_askpass_dir(dir: &Path) -> Result<(), String> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = std::fs::symlink_metadata(dir).map_err(|e| e.to_string())?;
+            if metadata.file_type().is_dir() && metadata.permissions().mode() & 0o777 == 0o700 {
+                Ok(())
+            } else {
+                Err(format!("diretório askpass inseguro: {}", dir.display()))
+            }
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(not(unix))]
+fn ensure_private_askpass_dir(dir: &Path) -> Result<(), String> {
+    std::fs::create_dir(dir)
+        .map_err(|e| e.to_string())
+        .or_else(|e| if dir.is_dir() { Ok(()) } else { Err(e) })
+}
+
+fn create_askpass_attempt(
+    app: &AppHandle,
+    id: &str,
+    counter: u64,
+    secret: &str,
+) -> Result<AskpassAttempt, String> {
+    let helper = std::env::current_exe().map_err(|e| e.to_string())?;
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+    let dir = app_data_dir.join("askpass");
+    ensure_private_askpass_dir(&dir)?;
+    let secret_file = dir.join(format!(
+        "secret-{:016x}-{}-{counter}",
+        askpass_session_tag(id),
+        std::process::id()
+    ));
+
+    #[cfg(unix)]
+    let mut file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&secret_file)
+            .map_err(|e| e.to_string())?
+    };
+    #[cfg(not(unix))]
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&secret_file)
+        .map_err(|e| e.to_string())?;
+
+    #[cfg(unix)]
+    if let Err(e) = file.set_permissions({
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::Permissions::from_mode(0o600)
+    }) {
+        drop(file);
+        let _ = std::fs::remove_file(&secret_file);
+        return Err(e.to_string());
+    }
+
+    if let Err(e) = file.write_all(secret.as_bytes()).and_then(|_| file.flush()) {
+        drop(file);
+        let _ = std::fs::remove_file(&secret_file);
+        return Err(e.to_string());
+    }
+
+    Ok(AskpassAttempt {
+        helper,
+        secret_file,
+    })
 }
 
 /// Nome de sessão tmux derivado do nome do host (tmux não aceita ':' e '.').
@@ -203,7 +344,11 @@ fn remote_command(mode: &str, name: &str, dir: Option<&str>) -> Option<String> {
     }
 }
 
-fn build_command(host: Option<&Host>, params: Option<&SessionParams>) -> Result<CommandBuilder, String> {
+fn build_command(
+    host: Option<&Host>,
+    params: Option<&SessionParams>,
+    askpass: Option<&AskpassAttempt>,
+) -> Result<CommandBuilder, String> {
     match host {
         None => {
             let mut cmd = CommandBuilder::new(pty::default_shell());
@@ -226,7 +371,32 @@ fn build_command(host: Option<&Host>, params: Option<&SessionParams>) -> Result<
                 }
             }
             let mut cmd = CommandBuilder::new("ssh");
+            // Não herda configuração askpass do processo pai nem a variável
+            // antiga que carregava o segredo diretamente no ambiente.
+            for key in [
+                "SSH_ASKPASS",
+                "SSH_ASKPASS_REQUIRE",
+                "HELM_ASKPASS_MODE",
+                "HELM_ASKPASS_SECRET",
+                "HELM_ASKPASS_SECRET_FILE",
+            ] {
+                cmd.env_remove(key);
+            }
             cmd.arg("-tt");
+            cmd.arg("-o");
+            cmd.arg("ConnectTimeout=10");
+            cmd.arg("-o");
+            cmd.arg("ServerAliveInterval=15");
+            cmd.arg("-o");
+            cmd.arg("ServerAliveCountMax=3");
+            if let Some(askpass) = askpass {
+                cmd.env("SSH_ASKPASS", &askpass.helper);
+                cmd.env("SSH_ASKPASS_REQUIRE", "force");
+                cmd.env("HELM_ASKPASS_MODE", "1");
+                cmd.env("HELM_ASKPASS_SECRET_FILE", &askpass.secret_file);
+                cmd.arg("-o");
+                cmd.arg("NumberOfPasswordPrompts=1");
+            }
             if let Some(port) = host.port {
                 cmd.arg("-p");
                 cmd.arg(port.to_string());
@@ -292,6 +462,7 @@ fn manager_loop(
         .filter(|p| !p.is_empty());
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut attempt: u32 = 0;
+    let mut askpass_counter: u64 = 0;
 
     // Host exige VPN → conecta antes do SSH (sequência do design 4a).
     if let Some(profile) = &vpn_profile {
@@ -321,7 +492,25 @@ fn manager_loop(
         }
 
         let (cols, rows) = *session.size.lock().unwrap();
-        let cmd = match build_command(host.as_ref(), params.as_ref()) {
+        let askpass = if !session.askpass_disabled.load(Ordering::Relaxed) {
+            session.askpass_secret.as_ref().and_then(|secret| {
+                askpass_counter = askpass_counter.saturating_add(1);
+                match create_askpass_attempt(&app, &id, askpass_counter, secret) {
+                    Ok(askpass) => Some(askpass),
+                    Err(e) => {
+                        eprintln!(
+                            "[session {id}] preparação do askpass falhou ({e}); usando autenticação interativa"
+                        );
+                        session.askpass_disabled.store(true, Ordering::Relaxed);
+                        None
+                    }
+                }
+            })
+        } else {
+            None
+        };
+        let used_askpass = askpass.is_some();
+        let cmd = match build_command(host.as_ref(), params.as_ref(), askpass.as_ref()) {
             Ok(cmd) => cmd,
             Err(e) => {
                 eprintln!("[session {id}] comando inválido: {e}");
@@ -331,17 +520,22 @@ fn manager_loop(
         };
 
         let spawn_result = pty::spawn(cmd, cols, rows);
-        let (lived, got_output) = match spawn_result {
+        let (lived, got_output, exit_status) = match spawn_result {
             Err(e) => {
                 eprintln!("[session {id}] spawn falhou: {e}");
-                (Duration::ZERO, false)
+                (Duration::ZERO, false, None)
             }
             Ok(mut handles) => {
+                *session.writer.lock().unwrap() = Some(handles.writer);
                 *session.io.lock().unwrap() = Some(Io {
-                    writer: handles.writer,
                     master: handles.master,
                     killer: handles.killer,
                 });
+                // close_session pode ter sido chamado entre o teste de `closed`
+                // no início do loop e a publicação dos handles do novo PTY.
+                if session.closed.load(Ordering::Relaxed) {
+                    close_session_inner(&session);
+                }
                 let started = Instant::now();
                 let mut got_output = false;
                 let mut buf = [0u8; 8192];
@@ -385,21 +579,62 @@ fn manager_loop(
                 session.connected.store(false, Ordering::Relaxed);
                 set_attention(&app, &session, &id, false, None);
                 *session.io.lock().unwrap() = None;
-                (started.elapsed(), got_output)
+                *session.writer.lock().unwrap() = None;
+                let exit_status = match handles.exit_status.recv_timeout(EXIT_STATUS_WAIT) {
+                    Ok(Ok(status)) => Some(status),
+                    Ok(Err(e)) => {
+                        eprintln!("[session {id}] falha ao obter status do processo: {e}");
+                        None
+                    }
+                    Err(e) => {
+                        eprintln!("[session {id}] status do processo indisponível após EOF: {e}");
+                        None
+                    }
+                };
+                (started.elapsed(), got_output, exit_status)
             }
         };
+        // Normalmente o helper já consumiu e apagou o arquivo; cobre spawn/SSH
+        // que falharam antes de chamá-lo e qualquer outra sobra da tentativa.
+        drop(askpass);
+
+        let exit_code = exit_status.as_ref().map(|status| status.exit_code());
+        if let Some(status) = &exit_status {
+            if let Some(signal) = status.signal() {
+                eprintln!(
+                    "[session {id}] EOF — processo encerrou com código {} ({signal})",
+                    status.exit_code()
+                );
+            } else {
+                eprintln!(
+                    "[session {id}] EOF — processo encerrou com código {}",
+                    status.exit_code()
+                );
+            }
+        }
 
         if session.closed.load(Ordering::Relaxed) {
-            emit_status(&app, &id, "exited", None, None);
+            emit_status_with_exit_code(&app, &id, "exited", None, None, exit_code);
             break;
         }
         if session.detached.load(Ordering::Relaxed) {
             eprintln!("[session {id}] detach — tmux preservado no servidor");
-            emit_status(&app, &id, "detached", None, None);
+            emit_status_with_exit_code(&app, &id, "detached", None, None, exit_code);
+            break;
+        }
+        // `got_output` é o mesmo marco que emite o estado "connected" acima.
+        if used_askpass && exit_code == Some(255) && !got_output {
+            session.askpass_disabled.store(true, Ordering::Relaxed);
+            eprintln!("[session] askpass falhou; caindo para autenticação interativa");
+            continue;
+        }
+        if classify_exit_status(exit_status.as_ref()) == ExitKind::Clean {
+            eprintln!("[session {id}] fechamento normal — reconexão não necessária");
+            emit_status_with_exit_code(&app, &id, "exited", None, None, exit_code);
             break;
         }
         if !auto_reconnect {
-            emit_status(&app, &id, "exited", None, None);
+            emit_status_with_exit_code(&app, &id, "exited", None, None, exit_code);
             break;
         }
 
@@ -411,7 +646,14 @@ fn manager_loop(
 
         if attempt > MAX_ATTEMPTS {
             eprintln!("[session {id}] {MAX_ATTEMPTS} tentativas falharam — retry em {ERROR_RETRY_SECS}s");
-            emit_status(&app, &id, "error", Some(MAX_ATTEMPTS), Some(ERROR_RETRY_SECS));
+            emit_status_with_exit_code(
+                &app,
+                &id,
+                "error",
+                Some(MAX_ATTEMPTS),
+                Some(ERROR_RETRY_SECS),
+                exit_code,
+            );
             interruptible_sleep(&session, ERROR_RETRY_SECS);
             if session.closed.load(Ordering::Relaxed) {
                 break;
@@ -421,8 +663,21 @@ fn manager_loop(
         }
 
         let delay = (1u64 << (attempt - 1)).min(30);
-        eprintln!("[session {id}] reconectando — tentativa {attempt}/{MAX_ATTEMPTS} em {delay}s");
-        emit_status(&app, &id, "reconnecting", Some(attempt), Some(delay));
+        if let Some(code) = exit_code {
+            eprintln!(
+                "[session {id}] reconectando após código {code} — tentativa {attempt}/{MAX_ATTEMPTS} em {delay}s"
+            );
+        } else {
+            eprintln!("[session {id}] reconectando — tentativa {attempt}/{MAX_ATTEMPTS} em {delay}s");
+        }
+        emit_status_with_exit_code(
+            &app,
+            &id,
+            "reconnecting",
+            Some(attempt),
+            Some(delay),
+            exit_code,
+        );
         interruptible_sleep(&session, delay);
     }
 
@@ -448,16 +703,19 @@ fn start_session(
     sessions: &State<'_, Sessions>,
     id: String,
     host: Option<Host>,
-    cols: u16,
-    rows: u16,
+    size: (u16, u16),
     params: Option<SessionParams>,
+    askpass_secret: Option<Zeroizing<String>>,
 ) {
     let session = Arc::new(Session {
         host_id: host.as_ref().map(|h| h.id.clone()),
+        askpass_secret,
+        askpass_disabled: AtomicBool::new(false),
         closed: AtomicBool::new(false),
         detached: AtomicBool::new(false),
         retry_now: AtomicBool::new(false),
-        size: Mutex::new((cols, rows)),
+        size: Mutex::new(size),
+        writer: Mutex::new(None),
         io: Mutex::new(None),
         connected: AtomicBool::new(false),
         attention: AtomicBool::new(false),
@@ -478,16 +736,35 @@ fn start_session(
     std::thread::spawn(move || manager_loop(app, id, session, host, params));
 }
 
-#[tauri::command]
-pub fn open_local_session(
-    app: AppHandle,
-    sessions: State<'_, Sessions>,
-    id: String,
-    cols: u16,
-    rows: u16,
-) -> Result<(), String> {
-    start_session(app, &sessions, id, None, cols, rows, None);
-    Ok(())
+fn resolve_ssh_password(
+    db: &State<'_, Db>,
+    vault: &State<'_, Vault>,
+    host: &Host,
+) -> Option<Zeroizing<String>> {
+    let credential_id = host.credential_ref.as_deref()?;
+    let eligible = {
+        let conn = db.0.lock().unwrap();
+        db::has_ssh_password_credential(&conn, credential_id)
+    };
+    match eligible {
+        Ok(true) => {}
+        // credencial só de sudo (sem escopo ssh) é configuração normal — sem aviso
+        Ok(false) => return None,
+        Err(e) => {
+            eprintln!("[session] falha ao consultar credencial SSH ({e}); usando autenticação interativa");
+            return None;
+        }
+    }
+
+    match vault::get_secret(db, vault, credential_id) {
+        Ok(secret) => Some(Zeroizing::new(secret)),
+        Err(_) => {
+            eprintln!(
+                "[session] cofre ou segredo SSH indisponível; usando autenticação interativa"
+            );
+            None
+        }
+    }
 }
 
 #[tauri::command]
@@ -496,6 +773,7 @@ pub fn open_ssh_session(
     app: AppHandle,
     sessions: State<'_, Sessions>,
     db: State<'_, Db>,
+    vault: State<'_, Vault>,
     id: String,
     host_id: String,
     cols: u16,
@@ -503,7 +781,16 @@ pub fn open_ssh_session(
     params: Option<SessionParams>,
 ) -> Result<(), String> {
     let host = db::get_host(&db, &host_id)?;
-    start_session(app, &sessions, id, Some(host), cols, rows, params);
+    let askpass_secret = resolve_ssh_password(&db, &vault, &host);
+    start_session(
+        app,
+        &sessions,
+        id,
+        Some(host),
+        (cols, rows),
+        params,
+        askpass_secret,
+    );
     Ok(())
 }
 
@@ -518,10 +805,13 @@ pub fn write_stdin(
     // tecla do usuário → registra input e limpa atenção
     *session.last_input.lock().unwrap() = Instant::now();
     set_attention(&app, &session, &id, false, None);
-    let mut io = session.io.lock().unwrap();
-    let io = io.as_mut().ok_or("sessão sem PTY ativo")?;
-    io.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
-    io.writer.flush().map_err(|e| e.to_string())
+    // O lock de `io` também protege killer/master; uma escrita bloqueante não
+    // pode impedir close_session de alcançar o killer. O mutex exclusivo do
+    // writer mantém write_all + flush serializados e, portanto, em ordem.
+    let mut writer = session.writer.lock().unwrap();
+    let writer = writer.as_mut().ok_or("sessão sem PTY ativo")?;
+    writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+    writer.flush().map_err(|e| e.to_string())
 }
 
 const ATTENTION_SETTLE: Duration = Duration::from_secs(2);
@@ -584,12 +874,75 @@ pub fn close_session(sessions: State<'_, Sessions>, id: String) -> Result<(), St
         map.get(&id).cloned()
     };
     if let Some(session) = session {
-        session.closed.store(true, Ordering::Relaxed);
-        if let Some(io) = session.io.lock().unwrap().as_mut() {
-            let _ = io.killer.kill();
-        }
+        close_session_inner(&session);
     }
     Ok(())
+}
+
+fn kill_child(io: &mut Io) {
+    let _ = io.killer.kill();
+}
+
+fn close_session_inner(session: &Session) {
+    session.closed.store(true, Ordering::Relaxed);
+    if let Some(io) = session.io.lock().unwrap().as_mut() {
+        kill_child(io);
+    }
+    session.writer.lock().unwrap().take();
+}
+
+/// Fecha todas as sessões sem permitir que um writer bloqueado segure o exit.
+/// As threads de sessão removem suas próprias entradas do mapa ao terminarem.
+pub fn shutdown_sessions(sessions: &Sessions, timeout: Duration) {
+    let snapshot: Vec<Arc<Session>> = {
+        let map = sessions.0.lock().unwrap();
+        map.values().cloned().collect()
+    };
+    for session in &snapshot {
+        session.closed.store(true, Ordering::Relaxed);
+    }
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        for session in &snapshot {
+            match session.io.try_lock() {
+                Ok(mut io) => {
+                    if let Some(io) = io.as_mut() {
+                        kill_child(io);
+                    }
+                }
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                    if let Some(io) = poisoned.into_inner().as_mut() {
+                        kill_child(io);
+                    }
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {}
+            }
+            match session.writer.try_lock() {
+                Ok(mut writer) => {
+                    writer.take();
+                }
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                    poisoned.into_inner().take();
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {}
+            }
+        }
+
+        let any_registered = {
+            let map = sessions.0.lock().unwrap();
+            snapshot
+                .iter()
+                .any(|session| map.values().any(|current| Arc::ptr_eq(current, session)))
+        };
+        let now = Instant::now();
+        if !any_registered || now >= deadline {
+            break;
+        }
+        std::thread::sleep(
+            Duration::from_millis(20).min(deadline.saturating_duration_since(now)),
+        );
+    }
 }
 
 /// Detach do tmux: injeta prefixo Ctrl+B + d — o comando remoto termina,
@@ -598,10 +951,18 @@ pub fn close_session(sessions: State<'_, Sessions>, id: String) -> Result<(), St
 pub fn detach_session(sessions: State<'_, Sessions>, id: String) -> Result<(), String> {
     let session = get(&sessions, &id)?;
     session.detached.store(true, Ordering::Relaxed);
-    let mut io = session.io.lock().unwrap();
-    let io = io.as_mut().ok_or("sessão sem PTY ativo")?;
-    io.writer.write_all(b"\x02d").map_err(|e| e.to_string())?;
-    io.writer.flush().map_err(|e| e.to_string())
+    let mut writer = session.writer.lock().unwrap();
+    let result = match writer.as_mut() {
+        Some(writer) => writer
+            .write_all(b"\x02d")
+            .and_then(|_| writer.flush())
+            .map_err(|e| e.to_string()),
+        None => Err("sessão sem PTY ativo".to_string()),
+    };
+    if result.is_err() {
+        session.detached.store(false, Ordering::Relaxed);
+    }
+    result
 }
 
 /// Interrompe a espera do ciclo de erro e tenta reconectar já.
@@ -624,7 +985,8 @@ fn get(sessions: &State<'_, Sessions>, id: &str) -> Result<Arc<Session>, String>
 
 #[cfg(test)]
 mod tests {
-    use super::{looks_like_prompt, strip_ansi};
+    use super::{classify_exit_status, looks_like_prompt, strip_ansi, ExitKind};
+    use portable_pty::ExitStatus;
 
     #[test]
     fn strip_ansi_preserva_multibyte() {
@@ -646,5 +1008,19 @@ mod tests {
         assert!(looks_like_prompt("\x1b[32m❯\x1b[0m"));
         assert!(looks_like_prompt("Overwrite? "));
         assert!(!looks_like_prompt("user@host:~$ "));
+    }
+
+    #[test]
+    fn classifica_exit_status_para_reconexao() {
+        let success = ExitStatus::with_exit_code(0);
+        let remote_failure = ExitStatus::with_exit_code(1);
+        let ssh_failure = ExitStatus::with_exit_code(255);
+        let killed = ExitStatus::with_signal("Killed");
+
+        assert_eq!(classify_exit_status(Some(&success)), ExitKind::Clean);
+        assert_eq!(classify_exit_status(Some(&remote_failure)), ExitKind::Clean);
+        assert_eq!(classify_exit_status(Some(&ssh_failure)), ExitKind::Failure);
+        assert_eq!(classify_exit_status(Some(&killed)), ExitKind::Failure);
+        assert_eq!(classify_exit_status(None), ExitKind::Unknown);
     }
 }

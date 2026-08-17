@@ -128,6 +128,7 @@ export function Sidebar() {
   const t = useT();
   const hosts = useHostsStore((s) => s.hosts);
   const load = useHostsStore((s) => s.load);
+  const loadError = useHostsStore((s) => s.error);
   const openModal = useUiStore((s) => s.openModal);
   const collapsedGroups = useUiStore((s) => s.collapsedGroups);
   const toggleGroup = useUiStore((s) => s.toggleGroup);
@@ -179,7 +180,12 @@ export function Sidebar() {
       )}
 
       <div className="sidebar__list">
-        {groups.length === 0 && (
+        {loadError && (
+          <div className="sidebar__empty" style={{ color: "#f0785a" }}>
+            {t("sb.loadError", { msg: loadError })}
+          </div>
+        )}
+        {groups.length === 0 && !loadError && (
           <div className="sidebar__empty">{t("sb.empty")}</div>
         )}
         {groups.map((group) => {

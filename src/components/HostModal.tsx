@@ -178,6 +178,9 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
                 ))}
               </select>
             )}
+            <div className="hxm__cred-sub" style={{ marginTop: 6 }}>
+              {t("hm.authHint")}
+            </div>
           </div>
 
           <div className="hxm__toggles">

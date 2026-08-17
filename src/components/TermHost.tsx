@@ -23,11 +23,19 @@ export function TermHost({ uiId, hostId, active, fontSize }: TermHostProps) {
 
     claimHolder(uiId, hostId, holder, fontSize);
 
-    const observer = new ResizeObserver(() => fitEntry(uiId));
+    let resizeFrame: number | null = null;
+    const observer = new ResizeObserver(() => {
+      if (resizeFrame !== null) return;
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        fitEntry(uiId);
+      });
+    });
     observer.observe(holder);
 
     return () => {
       observer.disconnect();
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
       releaseHolder(uiId, holder);
     };
   }, [uiId, hostId, fontSize]);

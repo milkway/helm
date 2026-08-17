@@ -100,6 +100,39 @@ pub fn get_host(db: &State<'_, Db>, id: &str) -> Result<Host, String> {
     .map_err(|e| format!("host {id}: {e}"))
 }
 
+pub(crate) fn has_ssh_password_credential(
+    conn: &Connection,
+    id: &str,
+) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM credentials_meta
+            WHERE id = ?1
+              AND kind = 'password'
+              AND scope LIKE '%ssh%'
+              AND has_secret
+        )",
+        [id],
+        |row| row.get(0),
+    )
+}
+
+#[tauri::command]
+pub fn host_has_ssh_credential(db: State<'_, Db>, host_id: String) -> Result<bool, String> {
+    let conn = db.0.lock().unwrap();
+    let credential_id: Option<String> = conn
+        .query_row(
+            "SELECT credential_ref FROM hosts WHERE id = ?1",
+            [&host_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("host {host_id}: {e}"))?;
+    let Some(credential_id) = credential_id else {
+        return Ok(false);
+    };
+    has_ssh_password_credential(&conn, &credential_id).map_err(|e| e.to_string())
+}
+
 fn row_to_host(row: &rusqlite::Row) -> rusqlite::Result<Host> {
     Ok(Host {
         id: row.get(0)?,
@@ -210,7 +243,7 @@ pub fn delete_host(db: State<'_, Db>, id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{migrate, MIGRATIONS};
+    use super::{has_ssh_password_credential, migrate, MIGRATIONS};
     use rusqlite::Connection;
 
     #[test]
@@ -234,5 +267,29 @@ mod tests {
             )
             .unwrap();
         assert_eq!(has_col, 1);
+    }
+
+    #[test]
+    fn reconhece_apenas_senha_com_escopo_ssh_e_segredo() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO credentials_meta (id, kind, label, scope, has_secret) VALUES
+                ('ssh', 'password', 'SSH', 'ssh', 1),
+                ('ssh-sudo', 'password', 'SSH sudo', 'ssh · sudo', 1),
+                ('sudo', 'password', 'sudo', 'sudo', 1),
+                ('nopasswd', 'password', 'NOPASSWD', 'NOPASSWD', 0),
+                ('empty', 'password', 'SSH sem segredo', 'ssh', 0),
+                ('key', 'ssh_key', 'Chave', 'ssh', 1);",
+        )
+        .unwrap();
+
+        assert!(has_ssh_password_credential(&conn, "ssh").unwrap());
+        assert!(has_ssh_password_credential(&conn, "ssh-sudo").unwrap());
+        assert!(!has_ssh_password_credential(&conn, "sudo").unwrap());
+        assert!(!has_ssh_password_credential(&conn, "nopasswd").unwrap());
+        assert!(!has_ssh_password_credential(&conn, "empty").unwrap());
+        assert!(!has_ssh_password_credential(&conn, "key").unwrap());
+        assert!(!has_ssh_password_credential(&conn, "missing").unwrap());
     }
 }

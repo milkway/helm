@@ -3,10 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { Host, SessionStatus } from "../types";
 
-export function openLocalSession(id: string, cols: number, rows: number): Promise<void> {
-  return invoke("open_local_session", { id, cols, rows });
-}
-
 export interface SessionParams {
   mode: "shell" | "tmux" | "clmux";
   sessionName?: string;
@@ -84,8 +80,60 @@ export function deleteHost(id: string): Promise<void> {
   return invoke("delete_host", { id });
 }
 
+export function hostHasSshCredential(hostId: string): Promise<boolean> {
+  return invoke("host_has_ssh_credential", { hostId });
+}
+
 export function importSshConfig(): Promise<number> {
   return invoke("import_ssh_config");
+}
+
+export interface VaultCredentialMeta {
+  id: string;
+  kind: "ssh_key" | "password";
+  label: string;
+  algo: string | null;
+  scope: string | null;
+  lastUsed: string | null;
+  /** false = só metadados (NOPASSWD, chave sem passphrase) */
+  hasSecret: boolean;
+}
+
+export interface VaultStatus {
+  locked: boolean;
+  count: number;
+}
+
+export function vaultStatus(): Promise<VaultStatus> {
+  return invoke("vault_status");
+}
+
+export function vaultUnlock(): Promise<VaultStatus> {
+  return invoke("vault_unlock");
+}
+
+export function vaultLock(): Promise<VaultStatus> {
+  return invoke("vault_lock");
+}
+
+export function vaultList(): Promise<VaultCredentialMeta[]> {
+  return invoke("vault_list");
+}
+
+export function vaultSave(meta: VaultCredentialMeta, secret: string): Promise<void> {
+  return invoke("vault_save", { meta, secret });
+}
+
+export function vaultDelete(id: string): Promise<void> {
+  return invoke("vault_delete", { id });
+}
+
+export function vaultReveal(id: string): Promise<string> {
+  return invoke("vault_reveal", { id });
+}
+
+export function onVaultStatus(handler: (status: VaultStatus) => void): Promise<UnlistenFn> {
+  return listen<VaultStatus>("vault-status", (event) => handler(event.payload));
 }
 
 export interface AppInfo {
@@ -144,6 +192,7 @@ export interface SessionStatusPayload {
   status: SessionStatus;
   attempt?: number;
   delaySecs?: number;
+  exitCode?: number;
 }
 
 export function onSessionStatus(

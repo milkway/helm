@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
+use zeroize::Zeroizing;
 
 use crate::db::Db;
 
@@ -250,28 +251,41 @@ pub fn vault_save(
     meta: CredMeta,
     secret: String,
 ) -> Result<(), String> {
+    let secret = Zeroizing::new(secret);
     require_unlocked(&vault.0)?;
     if meta.id.is_empty() || meta.label.is_empty() {
         return Err("credencial incompleta".into());
     }
     let has_secret = !secret.is_empty();
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &meta.id).map_err(|e| e.to_string())?;
-    if has_secret {
-        // segredo SÓ no keyring
-        entry.set_password(&secret).map_err(|e| e.to_string())?;
-    } else {
-        // credencial só-metadados (NOPASSWD / chave sem passphrase)
-        let _ = entry.delete_credential();
-    }
+    let keyring_action = if has_secret { "gravar" } else { "remover" };
+    (|| -> Result<(), keyring::Error> {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, &meta.id)?;
+        if has_secret {
+            // segredo SÓ no keyring
+            entry.set_password(secret.as_str())
+        } else {
+            // Ausência já é o estado desejado para credenciais só-metadados.
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(err) => Err(err),
+            }
+        }
+    })()
+    .map_err(|e| format!("falha ao {keyring_action} segredo no keyring: {e}"))?;
 
-    let conn = db.0.lock().unwrap();
-    conn.execute(
+    let mut conn = db.0.lock().unwrap();
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("falha ao iniciar gravação da metadata no SQLite: {e}"))?;
+    tx.execute(
         "INSERT INTO credentials_meta (id, kind, label, algo, scope, last_used, has_secret)
          VALUES (?1,?2,?3,?4,?5,NULL,?6)
          ON CONFLICT(id) DO UPDATE SET kind=?2, label=?3, algo=?4, scope=?5, has_secret=?6",
         rusqlite::params![meta.id, meta.kind, meta.label, meta.algo, meta.scope, has_secret],
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| format!("falha ao gravar metadata no SQLite: {e}"))?;
+    tx.commit()
+        .map_err(|e| format!("falha ao confirmar metadata no SQLite: {e}"))?;
     drop(conn);
 
     emit_vault_status(&app, false, count_creds(&db));
@@ -286,13 +300,19 @@ pub fn vault_delete(
     id: String,
 ) -> Result<(), String> {
     require_unlocked(&vault.0)?;
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &id) {
-        let _ = entry.delete_credential();
-    }
     let conn = db.0.lock().unwrap();
-    conn.execute("DELETE FROM credentials_meta WHERE id = ?1", [id])
-        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM credentials_meta WHERE id = ?1", [&id])
+        .map_err(|e| format!("falha ao apagar metadata no SQLite: {e}"))?;
     drop(conn);
+
+    if let Err(err) = keyring::Entry::new(KEYRING_SERVICE, &id)
+        .and_then(|entry| entry.delete_credential())
+    {
+        eprintln!(
+            "[vault] metadata da credencial {id} apagada, mas falhou ao remover segredo do keyring: {err}"
+        );
+    }
+
     emit_vault_status(&app, false, count_creds(&db));
     Ok(())
 }
