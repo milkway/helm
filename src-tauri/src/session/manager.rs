@@ -31,6 +31,7 @@ pub struct Session {
     detached: AtomicBool,
     retry_now: AtomicBool,
     size: Mutex<(u16, u16)>,
+    writer: Mutex<Option<Box<dyn Write + Send>>>,
     io: Mutex<Option<Io>>,
     // detecção de atenção (Fase 8)
     connected: AtomicBool,
@@ -41,7 +42,6 @@ pub struct Session {
 }
 
 struct Io {
-    writer: Box<dyn Write + Send>,
     master: Box<dyn portable_pty::MasterPty + Send>,
     killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
 }
@@ -373,11 +373,16 @@ fn manager_loop(
                 (Duration::ZERO, false, None)
             }
             Ok(mut handles) => {
+                *session.writer.lock().unwrap() = Some(handles.writer);
                 *session.io.lock().unwrap() = Some(Io {
-                    writer: handles.writer,
                     master: handles.master,
                     killer: handles.killer,
                 });
+                // close_session pode ter sido chamado entre o teste de `closed`
+                // no início do loop e a publicação dos handles do novo PTY.
+                if session.closed.load(Ordering::Relaxed) {
+                    close_session_inner(&session);
+                }
                 let started = Instant::now();
                 let mut got_output = false;
                 let mut buf = [0u8; 8192];
@@ -421,6 +426,7 @@ fn manager_loop(
                 session.connected.store(false, Ordering::Relaxed);
                 set_attention(&app, &session, &id, false, None);
                 *session.io.lock().unwrap() = None;
+                *session.writer.lock().unwrap() = None;
                 let exit_status = match handles.exit_status.recv_timeout(EXIT_STATUS_WAIT) {
                     Ok(Ok(status)) => Some(status),
                     Ok(Err(e)) => {
@@ -545,6 +551,7 @@ fn start_session(
         detached: AtomicBool::new(false),
         retry_now: AtomicBool::new(false),
         size: Mutex::new((cols, rows)),
+        writer: Mutex::new(None),
         io: Mutex::new(None),
         connected: AtomicBool::new(false),
         attention: AtomicBool::new(false),
@@ -593,10 +600,13 @@ pub fn write_stdin(
     // tecla do usuário → registra input e limpa atenção
     *session.last_input.lock().unwrap() = Instant::now();
     set_attention(&app, &session, &id, false, None);
-    let mut io = session.io.lock().unwrap();
-    let io = io.as_mut().ok_or("sessão sem PTY ativo")?;
-    io.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
-    io.writer.flush().map_err(|e| e.to_string())
+    // O lock de `io` também protege killer/master; uma escrita bloqueante não
+    // pode impedir close_session de alcançar o killer. O mutex exclusivo do
+    // writer mantém write_all + flush serializados e, portanto, em ordem.
+    let mut writer = session.writer.lock().unwrap();
+    let writer = writer.as_mut().ok_or("sessão sem PTY ativo")?;
+    writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+    writer.flush().map_err(|e| e.to_string())
 }
 
 const ATTENTION_SETTLE: Duration = Duration::from_secs(2);
@@ -659,12 +669,75 @@ pub fn close_session(sessions: State<'_, Sessions>, id: String) -> Result<(), St
         map.get(&id).cloned()
     };
     if let Some(session) = session {
-        session.closed.store(true, Ordering::Relaxed);
-        if let Some(io) = session.io.lock().unwrap().as_mut() {
-            let _ = io.killer.kill();
-        }
+        close_session_inner(&session);
     }
     Ok(())
+}
+
+fn kill_child(io: &mut Io) {
+    let _ = io.killer.kill();
+}
+
+fn close_session_inner(session: &Session) {
+    session.closed.store(true, Ordering::Relaxed);
+    if let Some(io) = session.io.lock().unwrap().as_mut() {
+        kill_child(io);
+    }
+    session.writer.lock().unwrap().take();
+}
+
+/// Fecha todas as sessões sem permitir que um writer bloqueado segure o exit.
+/// As threads de sessão removem suas próprias entradas do mapa ao terminarem.
+pub fn shutdown_sessions(sessions: &Sessions, timeout: Duration) {
+    let snapshot: Vec<Arc<Session>> = {
+        let map = sessions.0.lock().unwrap();
+        map.values().cloned().collect()
+    };
+    for session in &snapshot {
+        session.closed.store(true, Ordering::Relaxed);
+    }
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        for session in &snapshot {
+            match session.io.try_lock() {
+                Ok(mut io) => {
+                    if let Some(io) = io.as_mut() {
+                        kill_child(io);
+                    }
+                }
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                    if let Some(io) = poisoned.into_inner().as_mut() {
+                        kill_child(io);
+                    }
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {}
+            }
+            match session.writer.try_lock() {
+                Ok(mut writer) => {
+                    writer.take();
+                }
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                    poisoned.into_inner().take();
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {}
+            }
+        }
+
+        let any_registered = {
+            let map = sessions.0.lock().unwrap();
+            snapshot
+                .iter()
+                .any(|session| map.values().any(|current| Arc::ptr_eq(current, session)))
+        };
+        let now = Instant::now();
+        if !any_registered || now >= deadline {
+            break;
+        }
+        std::thread::sleep(
+            Duration::from_millis(20).min(deadline.saturating_duration_since(now)),
+        );
+    }
 }
 
 /// Detach do tmux: injeta prefixo Ctrl+B + d — o comando remoto termina,
@@ -673,12 +746,11 @@ pub fn close_session(sessions: State<'_, Sessions>, id: String) -> Result<(), St
 pub fn detach_session(sessions: State<'_, Sessions>, id: String) -> Result<(), String> {
     let session = get(&sessions, &id)?;
     session.detached.store(true, Ordering::Relaxed);
-    let mut io = session.io.lock().unwrap();
-    let result = match io.as_mut() {
-        Some(io) => io
-            .writer
+    let mut writer = session.writer.lock().unwrap();
+    let result = match writer.as_mut() {
+        Some(writer) => writer
             .write_all(b"\x02d")
-            .and_then(|_| io.writer.flush())
+            .and_then(|_| writer.flush())
             .map_err(|e| e.to_string()),
         None => Err("sessão sem PTY ativo".to_string()),
     };

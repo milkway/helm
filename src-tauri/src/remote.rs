@@ -5,9 +5,9 @@
 //! (`sudo -S -p ''`) — nunca em argv (visível no ps), history ou logs.
 
 use serde::{Deserialize, Serialize};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tauri::State;
 use zeroize::Zeroizing;
 
@@ -200,6 +200,8 @@ fn install_command(pkg_manager: &str) -> Option<&'static str> {
     })
 }
 
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(180);
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallAuth {
@@ -273,6 +275,7 @@ pub async fn install_tmux(
         let mut child = ssh_command(&target, host.port, &remote_cmd)
             .spawn()
             .map_err(|e| e.to_string())?;
+        let deadline = Instant::now() + INSTALL_TIMEOUT;
 
         if let Some(pwd) = &password {
             let mut stdin = child.stdin.take().ok_or("stdin indisponível")?;
@@ -281,9 +284,47 @@ pub async fn install_tmux(
             stdin.write_all(b"\n").map_err(|e| e.to_string())?;
             drop(stdin);
         }
+        // wait_with_output não oferece timeout. Drena os pipes em paralelo para
+        // que output volumoso do package manager não bloqueie o filho.
+        drop(child.stdin.take());
+        let mut stdout = child.stdout.take().ok_or("stdout indisponível")?;
+        let mut stderr = child.stderr.take().ok_or("stderr indisponível")?;
+        let stdout_reader = std::thread::spawn(move || {
+            let mut output = Vec::new();
+            stdout.read_to_end(&mut output).map(|_| output)
+        });
+        let stderr_reader = std::thread::spawn(move || {
+            let mut output = Vec::new();
+            stderr.read_to_end(&mut output).map(|_| output)
+        });
 
-        let output = child.wait_with_output().map_err(|e| e.to_string())?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        loop {
+            if child.try_wait().map_err(|e| e.to_string())?.is_some() {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let kill_error = child.kill().err();
+                let _ = child.wait();
+                return Err(match kill_error {
+                    Some(e) => format!(
+                        "instalação remota excedeu o timeout de 180s; falha ao encerrar ssh: {e}"
+                    ),
+                    None => "instalação remota excedeu o timeout de 180s; processo ssh encerrado"
+                        .to_string(),
+                });
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let stdout = stdout_reader
+            .join()
+            .map_err(|_| "falha ao coletar stdout da instalação".to_string())?
+            .map_err(|e| e.to_string())?;
+        let stderr = stderr_reader
+            .join()
+            .map_err(|_| "falha ao coletar stderr da instalação".to_string())?
+            .map_err(|e| e.to_string())?;
+        let stdout = String::from_utf8_lossy(&stdout);
         let version = stdout
             .split("__HELM_TMUX__")
             .nth(1)
@@ -292,7 +333,12 @@ pub async fn install_tmux(
         match version {
             Some(v) => Ok(v),
             None => {
-                let last = stdout.lines().rev().find(|l| !l.trim().is_empty());
+                let stderr = String::from_utf8_lossy(&stderr);
+                let last = stdout
+                    .lines()
+                    .rev()
+                    .find(|l| !l.trim().is_empty())
+                    .or_else(|| stderr.lines().rev().find(|l| !l.trim().is_empty()));
                 Err(last.unwrap_or("instalação falhou").trim().to_string())
             }
         }

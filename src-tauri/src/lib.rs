@@ -10,7 +10,7 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(manager::Sessions::default())
         .setup(|app| {
             let conn = db::open(app.handle()).map_err(std::io::Error::other)?;
@@ -52,6 +52,18 @@ pub fn run() {
             vpn::vpn_set_auto_disconnect,
             vpn::vpn_get_auto_disconnect,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    let mut shutdown_started = false;
+    app.run(move |app, event| {
+        if !shutdown_started
+            && matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit)
+        {
+            shutdown_started = true;
+            if let Some(sessions) = app.try_state::<manager::Sessions>() {
+                manager::shutdown_sessions(&sessions, std::time::Duration::from_secs(2));
+            }
+        }
+    });
 }
