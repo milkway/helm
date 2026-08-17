@@ -1,15 +1,17 @@
 //! Camada baixa: spawn de um processo dentro de um PTY.
 
 use portable_pty::{
-    native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize,
+    native_pty_system, ChildKiller, CommandBuilder, ExitStatus, MasterPty, PtySize,
 };
 use std::io::{Read, Write};
+use std::sync::mpsc::Receiver;
 
 pub struct PtyHandles {
     pub reader: Box<dyn Read + Send>,
     pub writer: Box<dyn Write + Send>,
     pub master: Box<dyn MasterPty + Send>,
     pub killer: Box<dyn ChildKiller + Send + Sync>,
+    pub exit_status: Receiver<std::io::Result<ExitStatus>>,
 }
 
 pub fn spawn(cmd: CommandBuilder, cols: u16, rows: u16) -> Result<PtyHandles, String> {
@@ -29,10 +31,11 @@ pub fn spawn(cmd: CommandBuilder, cols: u16, rows: u16) -> Result<PtyHandles, St
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let killer = child.clone_killer();
+    let (exit_status_tx, exit_status) = std::sync::mpsc::channel();
 
-    // O wait() do filho fica por conta do descarte; EOF do leitor sinaliza fim.
+    // Preserva o status do filho para o manager classificar o EOF.
     std::thread::spawn(move || {
-        let _ = child.wait();
+        let _ = exit_status_tx.send(child.wait());
     });
 
     Ok(PtyHandles {
@@ -40,6 +43,7 @@ pub fn spawn(cmd: CommandBuilder, cols: u16, rows: u16) -> Result<PtyHandles, St
         writer,
         master: pair.master,
         killer,
+        exit_status,
     })
 }
 
