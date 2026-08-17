@@ -5,7 +5,6 @@
 //! e revelar exigem autenticação do dono (Touch ID com fallback de senha no
 //! macOS via LocalAuthentication). Auto-lock após 15 min sem atividade.
 
-use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -258,44 +257,8 @@ pub fn vault_save(
         return Err("credencial incompleta".into());
     }
     let has_secret = !secret.is_empty();
-    let mut conn = db.0.lock().unwrap();
-    let previous = {
-        let tx = conn
-            .transaction()
-            .map_err(|e| format!("falha ao iniciar gravação da metadata no SQLite: {e}"))?;
-        let previous = tx
-            .query_row(
-                "SELECT id, kind, label, algo, scope, last_used, has_secret
-                 FROM credentials_meta WHERE id = ?1",
-                [&meta.id],
-                |row| {
-                    Ok(CredMeta {
-                        id: row.get(0)?,
-                        kind: row.get(1)?,
-                        label: row.get(2)?,
-                        algo: row.get(3)?,
-                        scope: row.get(4)?,
-                        last_used: row.get(5)?,
-                        has_secret: row.get(6)?,
-                    })
-                },
-            )
-            .optional()
-            .map_err(|e| format!("falha ao ler metadata anterior no SQLite: {e}"))?;
-        tx.execute(
-            "INSERT INTO credentials_meta (id, kind, label, algo, scope, last_used, has_secret)
-             VALUES (?1,?2,?3,?4,?5,NULL,?6)
-             ON CONFLICT(id) DO UPDATE SET kind=?2, label=?3, algo=?4, scope=?5, has_secret=?6",
-            rusqlite::params![meta.id, meta.kind, meta.label, meta.algo, meta.scope, has_secret],
-        )
-        .map_err(|e| format!("falha ao gravar metadata no SQLite: {e}"))?;
-        tx.commit()
-            .map_err(|e| format!("falha ao confirmar metadata no SQLite: {e}"))?;
-        previous
-    };
-    drop(conn);
-
-    let keyring_result: Result<(), keyring::Error> = (|| {
+    let keyring_action = if has_secret { "gravar" } else { "remover" };
+    (|| -> Result<(), keyring::Error> {
         let entry = keyring::Entry::new(KEYRING_SERVICE, &meta.id)?;
         if has_secret {
             // segredo SÓ no keyring
@@ -307,44 +270,23 @@ pub fn vault_save(
                 Err(err) => Err(err),
             }
         }
-    })();
+    })()
+    .map_err(|e| format!("falha ao {keyring_action} segredo no keyring: {e}"))?;
 
-    if let Err(keyring_error) = keyring_result {
-        let keyring_action = if has_secret { "gravar" } else { "remover" };
-        let compensation = (|| -> rusqlite::Result<()> {
-            let mut conn = db.0.lock().unwrap();
-            let tx = conn.transaction()?;
-            if let Some(previous) = &previous {
-                tx.execute(
-                    "INSERT INTO credentials_meta (id, kind, label, algo, scope, last_used, has_secret)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7)
-                     ON CONFLICT(id) DO UPDATE SET kind=?2, label=?3, algo=?4, scope=?5,
-                                                   last_used=?6, has_secret=?7",
-                    rusqlite::params![
-                        previous.id,
-                        previous.kind,
-                        previous.label,
-                        previous.algo,
-                        previous.scope,
-                        previous.last_used,
-                        previous.has_secret,
-                    ],
-                )?;
-            } else {
-                tx.execute("DELETE FROM credentials_meta WHERE id = ?1", [&meta.id])?;
-            }
-            tx.commit()
-        })();
-
-        return match compensation {
-            Ok(()) => Err(format!(
-                "falha ao {keyring_action} segredo no keyring; metadata do SQLite restaurada: {keyring_error}"
-            )),
-            Err(sqlite_error) => Err(format!(
-                "falha ao {keyring_action} segredo no keyring ({keyring_error}) e ao restaurar metadata no SQLite ({sqlite_error})"
-            )),
-        };
-    }
+    let mut conn = db.0.lock().unwrap();
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("falha ao iniciar gravação da metadata no SQLite: {e}"))?;
+    tx.execute(
+        "INSERT INTO credentials_meta (id, kind, label, algo, scope, last_used, has_secret)
+         VALUES (?1,?2,?3,?4,?5,NULL,?6)
+         ON CONFLICT(id) DO UPDATE SET kind=?2, label=?3, algo=?4, scope=?5, has_secret=?6",
+        rusqlite::params![meta.id, meta.kind, meta.label, meta.algo, meta.scope, has_secret],
+    )
+    .map_err(|e| format!("falha ao gravar metadata no SQLite: {e}"))?;
+    tx.commit()
+        .map_err(|e| format!("falha ao confirmar metadata no SQLite: {e}"))?;
+    drop(conn);
 
     emit_vault_status(&app, false, count_creds(&db));
     Ok(())

@@ -23,7 +23,7 @@ struct ProfileUsage {
     refs: u32,
     /// releases recebidos enquanto outra operação bloqueante está em andamento
     pending_releases: u32,
-    /// a conexão atual foi iniciada automaticamente pelo Helm
+    /// esta conexão foi iniciada por este processo do Helm; não persiste entre restarts
     connected_by_helm: bool,
     /// identifica a transição bloqueante atual; releases são acumulados
     transitioning: Option<u64>,
@@ -472,11 +472,13 @@ pub async fn vpn_connect(app: AppHandle, profile: String) -> Result<(), String> 
             .try_state::<Vpn>()
             .ok_or_else(|| "estado de VPN indisponível".to_string())?;
         match with_transition(&vpn, &p, TransitionBehavior::Wait, |_| {
+            let result = backend_connect(&p);
+            let connected = result.is_ok();
             TransitionUpdate {
-                result: backend_connect(&p),
+                result,
                 refs_added: 0,
                 refs_released: 0,
-                connected_by_helm: None,
+                connected_by_helm: connected.then_some(true),
                 check_auto_disconnect: false,
             }
         }) {
