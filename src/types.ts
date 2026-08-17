@@ -52,10 +52,10 @@ export interface SessionInfo {
 }
 
 export const STATUS_COLORS = {
-  connected: "#63d29b",
-  reconnect: "#e0b15e",
-  attention: "#f0785a",
-  idle: "#565c64",
+  connected: "var(--st-connected)",
+  reconnect: "var(--st-reconnect)",
+  attention: "var(--st-attention)",
+  idle: "var(--st-idle)",
 } as const;
 
 /** Cor de dot para um status de sessão (mapeia para a paleta do design). */

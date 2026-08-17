@@ -147,6 +147,20 @@ export function appInfo(): Promise<AppInfo> {
   return invoke("app_info");
 }
 
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  updateAvailable: boolean;
+}
+
+export function checkUpdates(): Promise<UpdateInfo> {
+  return invoke("check_updates");
+}
+
+export function openExternal(url: string): Promise<void> {
+  return invoke("open_external", { url });
+}
+
 export interface VpnProfile {
   name: string;
   state: "connected" | "disconnected" | "connecting";

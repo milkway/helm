@@ -24,10 +24,10 @@ function HostRow({ host }: { host: Host }) {
   const session = hostSession(sessions, host.id);
   const isActive = session != null && session.id === activeId;
   const attention = session?.attention ?? false;
-  const color = attention ? "#f0785a" : statusColor(session?.status);
+  const color = attention ? "var(--st-attention)" : statusColor(session?.status);
   const connected = session?.status === "connected";
   const connecting = session?.status === "connecting";
-  const nameColor = isActive ? "#f4f6f8" : session ? "#d2d6db" : "#8b9199";
+  const nameColor = isActive ? "var(--text-strong)" : session ? "var(--text)" : "var(--text-3)";
 
   const dotClasses = ["host-row__dot"];
   if (connected && !attention) dotClasses.push("host-row__dot--glow");
@@ -173,7 +173,7 @@ export function Sidebar() {
               {attentionHost?.name ?? firstAttention.hostId} · {t("sb.awaiting")}
             </div>
           </div>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f0785a" strokeWidth="2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--st-attention)" strokeWidth="2">
             <path d="M9 6l6 6-6 6" />
           </svg>
         </div>
@@ -181,7 +181,7 @@ export function Sidebar() {
 
       <div className="sidebar__list">
         {loadError && (
-          <div className="sidebar__empty" style={{ color: "#f0785a" }}>
+          <div className="sidebar__empty" style={{ color: "var(--st-attention-text)" }}>
             {t("sb.loadError", { msg: loadError })}
           </div>
         )}
@@ -232,7 +232,7 @@ function VaultFooter() {
   return (
     <div className="vault-footer" onClick={openModal} style={{ cursor: "pointer" }}>
       <div className="vault-footer__icon">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="1.8">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8">
           {locked ? (
             <>
               <rect x="4" y="10" width="16" height="11" rx="2" />
@@ -254,7 +254,7 @@ function VaultFooter() {
       </div>
       <div
         className="vault-footer__dot"
-        style={{ background: locked ? "#565c64" : "#63d29b" }}
+        style={{ background: locked ? "var(--st-idle)" : "var(--st-connected)" }}
       />
     </div>
   );

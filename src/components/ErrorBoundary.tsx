@@ -26,8 +26,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
             position: "fixed",
             inset: 0,
             zIndex: 99999,
-            background: "#15110f",
-            color: "#f5a88f",
+            background: "var(--bg-danger)",
+            color: "var(--st-attention-soft)",
             font: "13px/1.6 ui-monospace, monospace",
             padding: 24,
             overflow: "auto",
@@ -37,11 +37,11 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
           <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 10 }}>
             💥 Erro de render capturado
           </div>
-          <div style={{ color: "#f0c99a", marginBottom: 12 }}>
+          <div style={{ color: "var(--accent-hover)", marginBottom: 12 }}>
             {this.state.error.message}
           </div>
-          <div style={{ color: "#a97a68", fontSize: 11 }}>{this.state.error.stack}</div>
-          <div style={{ color: "#7d848d", fontSize: 11, marginTop: 12 }}>
+          <div style={{ color: "var(--st-attention-dim)", fontSize: 11 }}>{this.state.error.stack}</div>
+          <div style={{ color: "var(--text-3)", fontSize: 11, marginTop: 12 }}>
             {this.state.info}
           </div>
         </div>

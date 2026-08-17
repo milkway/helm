@@ -40,7 +40,7 @@ export function Inspector() {
       <div className="inspector">
         <div className="inspector__header">
           <div className="inspector__host">
-            <span className="inspector__host-dot" style={{ background: "#565c64", boxShadow: "none" }} />
+            <span className="inspector__host-dot" style={{ background: "var(--st-idle)", boxShadow: "none" }} />
             <span className="inspector__host-name">—</span>
           </div>
           <div className="inspector__host-addr">{t("in.none")}</div>
@@ -151,7 +151,7 @@ export function Inspector() {
 
         <div className="inspector__section inspector__section--gap">{t("in.credential")}</div>
         <div className="cred-card">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="1.8">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8">
             <rect x="4" y="10" width="16" height="11" rx="2" />
             <path d="M8 10V7a4 4 0 0 1 8 0v3" />
           </svg>

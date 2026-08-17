@@ -47,7 +47,7 @@ export function VpnPanel() {
       <div className="vpn-panel__scrim" onClick={() => togglePanel(false)} />
       <div className="vpn-panel">
         <div className="vpn-panel__header">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5aa9e0" strokeWidth="1.8">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--st-info)" strokeWidth="1.8">
             <path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z" />
           </svg>
           <span className="vpn-panel__title">{t("vp.title")}</span>
@@ -69,8 +69,8 @@ export function VpnPanel() {
                 <span
                   className="vpn-row__dot"
                   style={{
-                    background: connected ? "#5aa9e0" : "#565c64",
-                    boxShadow: connected ? "0 0 7px #5aa9e0" : "none",
+                    background: connected ? "var(--st-info)" : "var(--st-idle)",
+                    boxShadow: connected ? "0 0 7px var(--st-info)" : "none",
                   }}
                 />
                 <div className="vpn-row__body">

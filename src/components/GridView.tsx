@@ -13,14 +13,14 @@ const CARD_BODY_HEIGHT: Record<number, number> = { 2: 150, 3: 120, 4: 96 };
 function tagFor(status: SessionStatus): { label: string; color: string; bg: string } {
   switch (status) {
     case "connected":
-      return { label: "live", color: "#63d29b", bg: "rgba(99,210,155,.12)" };
+      return { label: "live", color: "var(--st-connected-text)", bg: "rgba(var(--st-connected-rgb),.12)" };
     case "connecting":
     case "reconnecting":
-      return { label: "reconnecting", color: "#e0b15e", bg: "rgba(224,177,94,.16)" };
+      return { label: "reconnecting", color: "var(--st-reconnect-text)", bg: "rgba(var(--st-reconnect-rgb),.16)" };
     case "error":
-      return { label: "error", color: "#f0785a", bg: "rgba(240,120,90,.16)" };
+      return { label: "error", color: "var(--st-attention-text)", bg: "rgba(var(--st-attention-rgb),.16)" };
     default:
-      return { label: "idle", color: "#565c64", bg: "rgba(255,255,255,.05)" };
+      return { label: "idle", color: "var(--st-idle)", bg: "var(--surface-3)" };
   }
 }
 

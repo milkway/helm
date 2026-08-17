@@ -26,6 +26,10 @@ export default function App() {
   const modal = useUiStore((s) => s.modal);
   const loadPrefs = useUiStore((s) => s.loadPrefs);
   const togglePalette = useUiStore((s) => s.togglePalette);
+  const sidebarHidden = useUiStore((s) => s.sidebarHidden);
+  const inspectorHidden = useUiStore((s) => s.inspectorHidden);
+  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  const toggleInspector = useUiStore((s) => s.toggleInspector);
   const loadLang = useLangStore((s) => s.load);
   const hosts = useHostsStore((s) => s.hosts);
   const hostsLoaded = useHostsStore((s) => s.loaded);
@@ -36,12 +40,16 @@ export default function App() {
     void loadLang();
   }, [loadPrefs, loadLang]);
 
-  // atalhos globais: ⌘K abre a palette, ⌘D destacha a sessão ativa
+  // atalhos globais: palette, detach e visibilidade dos painéis laterais
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         togglePalette();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        if (e.altKey) toggleInspector();
+        else toggleSidebar();
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d") {
         const { sessions, activeId } = useSessionsStore.getState();
         const active = sessions.find((s) => s.id === activeId);
@@ -54,7 +62,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePalette]);
+  }, [toggleInspector, togglePalette, toggleSidebar]);
 
   const showEmpty = hostsLoaded && !hostsError && hosts.length === 0;
 
@@ -62,13 +70,25 @@ export default function App() {
     <div className="app">
       <Titlebar />
       <div className="body">
-        <Sidebar />
+        <div
+          className={`layout-panel layout-panel--sidebar${sidebarHidden ? " layout-panel--hidden" : ""}`}
+          aria-hidden={sidebarHidden}
+          inert={sidebarHidden}
+        >
+          <Sidebar />
+        </div>
         <div className="main">
           <TabsToolbar />
           {showEmpty ? <EmptyState /> : view === "term" ? <TerminalView /> : <GridView />}
           <StatusBar />
         </div>
-        <Inspector />
+        <div
+          className={`layout-panel layout-panel--inspector${inspectorHidden ? " layout-panel--hidden" : ""}`}
+          aria-hidden={inspectorHidden}
+          inert={inspectorHidden}
+        >
+          <Inspector />
+        </div>
       </div>
       <VaultModal />
       <CommandPalette />

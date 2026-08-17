@@ -1,6 +1,6 @@
 // Posse dos terminais fora do React: um xterm por sessão, vivo enquanto a
 // aba existir, reparentado entre as views (terminal ↔ grid) via TermHost.
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import {
@@ -27,7 +27,7 @@ import { useUiStore } from "../stores/ui";
 import { isSudoCredential, useVaultStore } from "../stores/vault";
 import { sessionUsesTmux, tmuxSessionName, type Host, type SessionStatus } from "../types";
 
-const THEME = {
+const THEME_DARK: ITheme = {
   background: "#00000000",
   foreground: "#e6e8ea",
   cursor: "#e0a15e",
@@ -51,6 +51,30 @@ const THEME = {
   brightWhite: "#f4f6f8",
 };
 
+export const THEME_LIGHT: ITheme = {
+  background: "#00000000",
+  foreground: "#1a1d21",
+  cursor: "#92571f",
+  cursorAccent: "#faf9f6",
+  selectionBackground: "rgba(47,127,192,.24)",
+  black: "#2a2d31",
+  red: "#b23a35",
+  green: "#18794e",
+  yellow: "#8a6500",
+  blue: "#2563a6",
+  magenta: "#7a4ba0",
+  cyan: "#147d78",
+  white: "#4f565e",
+  brightBlack: "#6b727b",
+  brightRed: "#b74228",
+  brightGreen: "#18794e",
+  brightYellow: "#8a6500",
+  brightBlue: "#2563a6",
+  brightMagenta: "#7a4ba0",
+  brightCyan: "#147d78",
+  brightWhite: "#3a3f45",
+};
+
 export const TERM_FONT = '"JetBrains Mono", ui-monospace, monospace';
 
 export interface TermEntry {
@@ -64,6 +88,13 @@ export interface TermEntry {
 }
 
 const entries = new Map<string, TermEntry>();
+let currentTheme: "dark" | "light" = "dark";
+
+export function applyTermTheme(theme: "dark" | "light"): void {
+  currentTheme = theme;
+  const xtermTheme = theme === "light" ? THEME_LIGHT : THEME_DARK;
+  for (const entry of entries.values()) entry.term.options.theme = xtermTheme;
+}
 const lastPtySizes = new WeakMap<TermEntry, { cols: number; rows: number }>();
 const pending = new Map<string, Promise<TermEntry>>();
 type ConnectAbort = { aborted: boolean };
@@ -372,7 +403,7 @@ async function createEntry(
     cursorStyle: "block",
     allowTransparency: true,
     scrollback: 10_000,
-    theme: THEME,
+    theme: currentTheme === "light" ? THEME_LIGHT : THEME_DARK,
   });
   if (holder) term.options.fontSize = holder.fontSize;
   const fit = new FitAddon();

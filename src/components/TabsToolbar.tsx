@@ -42,7 +42,7 @@ export function TabsToolbar() {
           >
             <span
               className={`tab__dot${session.attention ? " tab__dot--pulse" : ""}`}
-              style={{ background: session.attention ? "#f0785a" : statusColor(session.status) }}
+              style={{ background: session.attention ? "var(--st-attention)" : statusColor(session.status) }}
             />
             <span className="tab__label">
               {session.params?.sessionName ?? hostName(session.hostId)}
@@ -69,7 +69,7 @@ export function TabsToolbar() {
       <div className="tabsbar__spacer" />
       <div className="tabsbar__right">
         <div className="tmux-badge" style={tmuxActive ? undefined : { opacity: 0.45 }}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#63d29b" strokeWidth="2">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--st-connected)" strokeWidth="2">
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <path d="M3 9h18M9 21V9" />
           </svg>
@@ -83,8 +83,8 @@ export function TabsToolbar() {
             if (tmuxActive && activeSession) detachTab(activeSession.id);
           }}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="2">
-            <path d="M12 4l-6 6h4v6h4v-6h4z" fill="#e0a15e" stroke="none" />
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
+            <path d="M12 4l-6 6h4v6h4v-6h4z" fill="var(--accent)" stroke="none" />
             <path d="M5 20h14" />
           </svg>
           <span className="detach-btn__label">{t("tt.detach")}</span>
