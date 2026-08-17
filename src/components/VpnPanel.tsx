@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Toggle } from "./fields";
 import { useVpnStore } from "../stores/vpn";
 import { useT } from "../i18n";
@@ -6,6 +6,7 @@ import { useT } from "../i18n";
 /** Painel de VPNs (design 4a) — flutuante no canto superior direito. */
 export function VpnPanel() {
   const t = useT();
+  const [confirmingProfile, setConfirmingProfile] = useState<string | null>(null);
   const open = useVpnStore((s) => s.panelOpen);
   const profiles = useVpnStore((s) => s.profiles);
   const autoDisconnect = useVpnStore((s) => s.autoDisconnect);
@@ -23,6 +24,21 @@ export function VpnPanel() {
     const t = setInterval(() => void load(), 2000);
     return () => clearInterval(t);
   }, [open, load]);
+
+  useEffect(() => {
+    if (
+      confirmingProfile &&
+      (!open ||
+        !profiles.some(
+          (profile) =>
+            profile.name === confirmingProfile &&
+            profile.state === "connected" &&
+            profile.hostsUsing > 0,
+        ))
+    ) {
+      setConfirmingProfile(null);
+    }
+  }, [confirmingProfile, open, profiles]);
 
   if (!open) return null;
 
@@ -43,6 +59,8 @@ export function VpnPanel() {
           {profiles.map((p) => {
             const connected = p.state === "connected";
             const connecting = p.state === "connecting";
+            const confirmingDisconnect =
+              connected && p.hostsUsing > 0 && confirmingProfile === p.name;
             return (
               <div
                 key={p.name}
@@ -63,24 +81,48 @@ export function VpnPanel() {
                   </div>
                 </div>
                 {connected ? (
-                  <span
-                    className="vpn-row__action"
-                    onClick={() => {
-                      if (
-                        p.hostsUsing > 0 &&
-                        !window.confirm(t("vp.disconnectConfirm", { n: p.hostsUsing }))
-                      ) {
-                        return;
-                      }
-                      void disconnect(p.name);
-                    }}
-                  >
-                    {t("vp.disconnect")}
-                  </span>
+                  !confirmingDisconnect && (
+                    <span
+                      className="vpn-row__action"
+                      onClick={() => {
+                        if (p.hostsUsing > 0) {
+                          setConfirmingProfile(p.name);
+                          return;
+                        }
+                        void disconnect(p.name);
+                      }}
+                    >
+                      {t("vp.disconnect")}
+                    </span>
+                  )
                 ) : (
                   <span className="vpn-row__action" onClick={() => void connect(p.name)}>
                     {connecting ? "…" : t("vp.connect")}
                   </span>
+                )}
+                {confirmingDisconnect && (
+                  <div className="vpn-row__confirm">
+                    <span className="vpn-row__confirm-text">
+                      {t("vp.disconnectConfirm", { n: p.hostsUsing })}
+                    </span>
+                    <div className="vpn-row__confirm-actions">
+                      <span
+                        className="vpn-row__confirm-btn vpn-row__confirm-btn--ghost"
+                        onClick={() => setConfirmingProfile(null)}
+                      >
+                        {t("vp.cancel")}
+                      </span>
+                      <span
+                        className="vpn-row__confirm-btn vpn-row__confirm-btn--primary"
+                        onClick={() => {
+                          setConfirmingProfile(null);
+                          void disconnect(p.name);
+                        }}
+                      >
+                        {t("vp.disconnect")}
+                      </span>
+                    </div>
+                  </div>
                 )}
               </div>
             );
