@@ -6,17 +6,22 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import {
   base64ToBytes,
   closeSession,
+  detectRemote,
   detachSession,
+  installTmux,
   onAttention,
   onSessionOutput,
   onSessionStatus,
   openSshSession,
   resizePty,
+  saveHost,
   writeStdin,
 } from "./ipc";
 import { useSessionsStore } from "../stores/sessions";
 import { useHostsStore } from "../stores/hosts";
-import { tmuxSessionName, type SessionStatus } from "../types";
+import { useUiStore } from "../stores/ui";
+import { isSudoCredential, useVaultStore } from "../stores/vault";
+import { sessionUsesTmux, tmuxSessionName, type SessionStatus } from "../types";
 
 const THEME = {
   background: "#00000000",
@@ -83,7 +88,7 @@ export function claimHolder(uiId: string, hostId: string, el: HTMLElement, fontS
   holders.set(uiId, { el, fontSize });
   const entry = entries.get(uiId);
   if (entry) attach(entry);
-  else void ensureTerm(uiId, hostId);
+  else void ensureTerm(uiId, hostId).catch(() => undefined);
 }
 
 export function releaseHolder(uiId: string, el: HTMLElement): void {
@@ -130,17 +135,88 @@ export function ensureTerm(uiId: string, hostId: string): Promise<TermEntry> {
   return promise;
 }
 
+async function prepareTmux(uiId: string, hostId: string): Promise<boolean> {
+  const host = useHostsStore.getState().hosts.find((item) => item.id === hostId);
+  const session = useSessionsStore.getState().sessions.find((item) => item.id === uiId);
+  if (!host || !session || !sessionUsesTmux(session, host) || !host.autoInstallTmux) {
+    return true;
+  }
+
+  const setAutoTmux = useUiStore.getState().setAutoTmux;
+  const openManual = (initialInfo?: Awaited<ReturnType<typeof detectRemote>>, initialError?: string) => {
+    setAutoTmux(null);
+    useUiStore.getState().openModal({
+      kind: "installTmux",
+      hostId,
+      resumeSessionId: uiId,
+      initialInfo,
+      initialError,
+    });
+    return false;
+  };
+
+  setAutoTmux({ hostId, phase: "detecting" });
+  let info: Awaited<ReturnType<typeof detectRemote>>;
+  try {
+    info = await detectRemote(hostId);
+  } catch (e) {
+    return openManual(undefined, String(e));
+  }
+
+  if (info.tmux) {
+    setAutoTmux(null);
+    return true;
+  }
+  if (!info.pkgManager) return openManual(info);
+
+  let vault = useVaultStore.getState();
+  if (vault.locked) {
+    setAutoTmux({ hostId, phase: "unlocking" });
+    await vault.unlock();
+    vault = useVaultStore.getState();
+  }
+
+  const sudoCreds = vault.creds.filter(isSudoCredential);
+  const credential =
+    sudoCreds.find((cred) => cred.id === host.credentialRef) ??
+    sudoCreds.find((cred) => cred.scope === "NOPASSWD");
+  if (vault.locked || !credential) return openManual(info);
+
+  setAutoTmux({ hostId, phase: "installing" });
+  try {
+    await installTmux(hostId, info.pkgManager, { credentialId: credential.id });
+  } catch (e) {
+    return openManual(info, String(e));
+  }
+
+  if (!host.autoAttach) {
+    try {
+      await saveHost({ ...host, autoAttach: true });
+      await useHostsStore.getState().load();
+    } catch {
+      // tmux já foi instalado; falha ao persistir auto-attach não bloqueia a sessão pedida.
+    }
+  }
+  setAutoTmux(null);
+  return true;
+}
+
 async function createEntry(
   uiId: string,
   hostId: string,
   abort: { aborted: boolean },
 ): Promise<TermEntry> {
+  const setStatus = useSessionsStore.getState().setStatus;
+  if (!(await prepareTmux(uiId, hostId))) {
+    setStatus(uiId, "error");
+    throw new Error("tmux installation requires user action");
+  }
+
   // A fonte PRECISA estar carregada antes do xterm medir a célula — métricas
   // da fonte fallback deixam espaçamento e geometria errados.
   await ensureFonts();
 
   const ptyId = `${uiId}-${crypto.randomUUID().slice(0, 8)}`;
-  const setStatus = useSessionsStore.getState().setStatus;
   const disposers: Array<() => void> = [];
   // desfaz tudo o que já foi alocado (listeners, PTY, terminal, nó DOM) — usado
   // quando a conexão falha ou a aba é fechada durante o connect, antes de a

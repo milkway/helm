@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import type { RemoteInfo } from "../lib/ipc";
 
 export type View = "term" | "grid";
 export type GridCols = 2 | 3 | 4;
@@ -8,7 +9,13 @@ export type Modal =
   | { kind: "addHost" }
   | { kind: "editHost"; hostId: string }
   | { kind: "newSession"; hostId?: string }
-  | { kind: "installTmux"; hostId: string }
+  | {
+      kind: "installTmux";
+      hostId: string;
+      resumeSessionId?: string;
+      initialInfo?: RemoteInfo;
+      initialError?: string;
+    }
   | { kind: "about" }
   | null;
 
@@ -18,12 +25,14 @@ interface UiState {
   modal: Modal;
   paletteOpen: boolean;
   collapsedGroups: string[];
+  autoTmux: { hostId: string; phase: "detecting" | "unlocking" | "installing" } | null;
   setView: (view: View) => void;
   setGridCols: (cols: GridCols) => void;
   openModal: (modal: Modal) => void;
   closeModal: () => void;
   togglePalette: (open?: boolean) => void;
   toggleGroup: (name: string) => void;
+  setAutoTmux: (state: UiState["autoTmux"]) => void;
   /** carrega preferências persistidas (ui_prefs no SQLite) */
   loadPrefs: () => Promise<void>;
 }
@@ -34,9 +43,11 @@ export const useUiStore = create<UiState>((set, get) => ({
   modal: null,
   paletteOpen: false,
   collapsedGroups: [],
+  autoTmux: null,
   openModal: (modal) => set({ modal, paletteOpen: false }),
   closeModal: () => set({ modal: null }),
   togglePalette: (open) => set((s) => ({ paletteOpen: open ?? !s.paletteOpen })),
+  setAutoTmux: (autoTmux) => set({ autoTmux }),
 
   toggleGroup: (name) => {
     const collapsedGroups = get().collapsedGroups.includes(name)

@@ -84,6 +84,54 @@ export function importSshConfig(): Promise<number> {
   return invoke("import_ssh_config");
 }
 
+export interface VaultCredentialMeta {
+  id: string;
+  kind: "ssh_key" | "password";
+  label: string;
+  algo: string | null;
+  scope: string | null;
+  lastUsed: string | null;
+  /** false = só metadados (NOPASSWD, chave sem passphrase) */
+  hasSecret: boolean;
+}
+
+export interface VaultStatus {
+  locked: boolean;
+  count: number;
+}
+
+export function vaultStatus(): Promise<VaultStatus> {
+  return invoke("vault_status");
+}
+
+export function vaultUnlock(): Promise<VaultStatus> {
+  return invoke("vault_unlock");
+}
+
+export function vaultLock(): Promise<VaultStatus> {
+  return invoke("vault_lock");
+}
+
+export function vaultList(): Promise<VaultCredentialMeta[]> {
+  return invoke("vault_list");
+}
+
+export function vaultSave(meta: VaultCredentialMeta, secret: string): Promise<void> {
+  return invoke("vault_save", { meta, secret });
+}
+
+export function vaultDelete(id: string): Promise<void> {
+  return invoke("vault_delete", { id });
+}
+
+export function vaultReveal(id: string): Promise<string> {
+  return invoke("vault_reveal", { id });
+}
+
+export function onVaultStatus(handler: (status: VaultStatus) => void): Promise<UnlistenFn> {
+  return listen<VaultStatus>("vault-status", (event) => handler(event.payload));
+}
+
 export interface AppInfo {
   version: string;
   build: string;
