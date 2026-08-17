@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -22,14 +23,16 @@ use crate::vault::{self, Vault};
 
 const MAX_ATTEMPTS: u32 = 5;
 const ERROR_RETRY_SECS: u64 = 60;
-/// viveu menos que isto com output = tentativa falhada, não conexão real
-const MIN_STABLE_SECS: u64 = 30;
-const EXIT_STATUS_WAIT: Duration = Duration::from_secs(1);
+/// Dez segundos filtram falhas de autenticação/handshake sem punir tanto links
+/// instáveis; quedas após isso reiniciam o backoff como uma conexão real.
+const MIN_STABLE_SECS: u64 = 10;
+const EXIT_STATUS_WAIT: Duration = Duration::from_secs(5);
 
 pub struct Session {
     #[allow(dead_code)] // usado nas fases de latência
     host_id: Option<String>,
     askpass_secret: Option<Zeroizing<String>>,
+    askpass_disabled: AtomicBool,
     closed: AtomicBool,
     detached: AtomicBool,
     retry_now: AtomicBool,
@@ -47,6 +50,17 @@ pub struct Session {
 struct Io {
     master: Box<dyn portable_pty::MasterPty + Send>,
     killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
+}
+
+struct AskpassAttempt {
+    helper: PathBuf,
+    secret_file: PathBuf,
+}
+
+impl Drop for AskpassAttempt {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.secret_file);
+    }
 }
 
 #[derive(Default)]
@@ -182,14 +196,106 @@ enum ExitKind {
     Unknown,
 }
 
-fn classify_exit_code(exit_code: Option<u32>) -> ExitKind {
-    // O ssh reserva 255 para falhas próprias (conexão/autenticação). Qualquer
-    // outro status veio do comando/shell remoto e representa encerramento.
-    match exit_code {
-        Some(255) => ExitKind::Failure,
+fn classify_exit_status(exit_status: Option<&portable_pty::ExitStatus>) -> ExitKind {
+    // portable-pty representa morte por sinal com código 1; o sinal precisa
+    // prevalecer sobre o código para que kill/OOM/sleep-wake reconectem.
+    match exit_status {
+        Some(status) if status.signal().is_some() => ExitKind::Failure,
+        Some(status) if status.exit_code() == 255 => ExitKind::Failure,
         Some(_) => ExitKind::Clean,
         None => ExitKind::Unknown,
     }
+}
+
+fn askpass_session_tag(id: &str) -> u64 {
+    let mut hash = 1469598103934665603u64;
+    for byte in id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(1099511628211);
+    }
+    hash
+}
+
+#[cfg(unix)]
+fn ensure_private_askpass_dir(dir: &Path) -> Result<(), String> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = std::fs::symlink_metadata(dir).map_err(|e| e.to_string())?;
+            if metadata.file_type().is_dir() && metadata.permissions().mode() & 0o777 == 0o700 {
+                Ok(())
+            } else {
+                Err(format!("diretório askpass inseguro: {}", dir.display()))
+            }
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(not(unix))]
+fn ensure_private_askpass_dir(dir: &Path) -> Result<(), String> {
+    std::fs::create_dir(dir)
+        .map_err(|e| e.to_string())
+        .or_else(|e| if dir.is_dir() { Ok(()) } else { Err(e) })
+}
+
+fn create_askpass_attempt(
+    app: &AppHandle,
+    id: &str,
+    counter: u64,
+    secret: &str,
+) -> Result<AskpassAttempt, String> {
+    let helper = std::env::current_exe().map_err(|e| e.to_string())?;
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+    let dir = app_data_dir.join("askpass");
+    ensure_private_askpass_dir(&dir)?;
+    let secret_file = dir.join(format!(
+        "secret-{:016x}-{}-{counter}",
+        askpass_session_tag(id),
+        std::process::id()
+    ));
+
+    #[cfg(unix)]
+    let mut file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&secret_file)
+            .map_err(|e| e.to_string())?
+    };
+    #[cfg(not(unix))]
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&secret_file)
+        .map_err(|e| e.to_string())?;
+
+    #[cfg(unix)]
+    if let Err(e) = file.set_permissions({
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::Permissions::from_mode(0o600)
+    }) {
+        drop(file);
+        let _ = std::fs::remove_file(&secret_file);
+        return Err(e.to_string());
+    }
+
+    if let Err(e) = file.write_all(secret.as_bytes()).and_then(|_| file.flush()) {
+        drop(file);
+        let _ = std::fs::remove_file(&secret_file);
+        return Err(e.to_string());
+    }
+
+    Ok(AskpassAttempt {
+        helper,
+        secret_file,
+    })
 }
 
 /// Nome de sessão tmux derivado do nome do host (tmux não aceita ':' e '.').
@@ -241,7 +347,7 @@ fn remote_command(mode: &str, name: &str, dir: Option<&str>) -> Option<String> {
 fn build_command(
     host: Option<&Host>,
     params: Option<&SessionParams>,
-    askpass_secret: Option<&str>,
+    askpass: Option<&AskpassAttempt>,
 ) -> Result<CommandBuilder, String> {
     match host {
         None => {
@@ -265,6 +371,17 @@ fn build_command(
                 }
             }
             let mut cmd = CommandBuilder::new("ssh");
+            // Não herda configuração askpass do processo pai nem a variável
+            // antiga que carregava o segredo diretamente no ambiente.
+            for key in [
+                "SSH_ASKPASS",
+                "SSH_ASKPASS_REQUIRE",
+                "HELM_ASKPASS_MODE",
+                "HELM_ASKPASS_SECRET",
+                "HELM_ASKPASS_SECRET_FILE",
+            ] {
+                cmd.env_remove(key);
+            }
             cmd.arg("-tt");
             cmd.arg("-o");
             cmd.arg("ConnectTimeout=10");
@@ -272,22 +389,13 @@ fn build_command(
             cmd.arg("ServerAliveInterval=15");
             cmd.arg("-o");
             cmd.arg("ServerAliveCountMax=3");
-            if let Some(secret) = askpass_secret {
-                match std::env::current_exe() {
-                    Ok(helper) => {
-                        cmd.env("SSH_ASKPASS", helper);
-                        cmd.env("SSH_ASKPASS_REQUIRE", "force");
-                        cmd.env("HELM_ASKPASS_MODE", "1");
-                        cmd.env("HELM_ASKPASS_SECRET", secret);
-                        cmd.arg("-o");
-                        cmd.arg("NumberOfPasswordPrompts=1");
-                        cmd.arg("-o");
-                        cmd.arg("StrictHostKeyChecking=accept-new");
-                    }
-                    Err(_) => eprintln!(
-                        "[session] helper SSH_ASKPASS indisponível; usando autenticação interativa"
-                    ),
-                }
+            if let Some(askpass) = askpass {
+                cmd.env("SSH_ASKPASS", &askpass.helper);
+                cmd.env("SSH_ASKPASS_REQUIRE", "force");
+                cmd.env("HELM_ASKPASS_MODE", "1");
+                cmd.env("HELM_ASKPASS_SECRET_FILE", &askpass.secret_file);
+                cmd.arg("-o");
+                cmd.arg("NumberOfPasswordPrompts=1");
             }
             if let Some(port) = host.port {
                 cmd.arg("-p");
@@ -354,6 +462,7 @@ fn manager_loop(
         .filter(|p| !p.is_empty());
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut attempt: u32 = 0;
+    let mut askpass_counter: u64 = 0;
 
     // Host exige VPN → conecta antes do SSH (sequência do design 4a).
     if let Some(profile) = &vpn_profile {
@@ -383,11 +492,25 @@ fn manager_loop(
         }
 
         let (cols, rows) = *session.size.lock().unwrap();
-        let askpass_secret = session
-            .askpass_secret
-            .as_ref()
-            .map(|secret| secret.as_str());
-        let cmd = match build_command(host.as_ref(), params.as_ref(), askpass_secret) {
+        let askpass = if !session.askpass_disabled.load(Ordering::Relaxed) {
+            session.askpass_secret.as_ref().and_then(|secret| {
+                askpass_counter = askpass_counter.saturating_add(1);
+                match create_askpass_attempt(&app, &id, askpass_counter, secret) {
+                    Ok(askpass) => Some(askpass),
+                    Err(e) => {
+                        eprintln!(
+                            "[session {id}] preparação do askpass falhou ({e}); usando autenticação interativa"
+                        );
+                        session.askpass_disabled.store(true, Ordering::Relaxed);
+                        None
+                    }
+                }
+            })
+        } else {
+            None
+        };
+        let used_askpass = askpass.is_some();
+        let cmd = match build_command(host.as_ref(), params.as_ref(), askpass.as_ref()) {
             Ok(cmd) => cmd,
             Err(e) => {
                 eprintln!("[session {id}] comando inválido: {e}");
@@ -471,6 +594,9 @@ fn manager_loop(
                 (started.elapsed(), got_output, exit_status)
             }
         };
+        // Normalmente o helper já consumiu e apagou o arquivo; cobre spawn/SSH
+        // que falharam antes de chamá-lo e qualquer outra sobra da tentativa.
+        drop(askpass);
 
         let exit_code = exit_status.as_ref().map(|status| status.exit_code());
         if let Some(status) = &exit_status {
@@ -496,7 +622,13 @@ fn manager_loop(
             emit_status_with_exit_code(&app, &id, "detached", None, None, exit_code);
             break;
         }
-        if classify_exit_code(exit_code) == ExitKind::Clean {
+        // `got_output` é o mesmo marco que emite o estado "connected" acima.
+        if used_askpass && exit_code == Some(255) && !got_output {
+            session.askpass_disabled.store(true, Ordering::Relaxed);
+            eprintln!("[session] askpass falhou; caindo para autenticação interativa");
+            continue;
+        }
+        if classify_exit_status(exit_status.as_ref()) == ExitKind::Clean {
             eprintln!("[session {id}] fechamento normal — reconexão não necessária");
             emit_status_with_exit_code(&app, &id, "exited", None, None, exit_code);
             break;
@@ -578,6 +710,7 @@ fn start_session(
     let session = Arc::new(Session {
         host_id: host.as_ref().map(|h| h.id.clone()),
         askpass_secret,
+        askpass_disabled: AtomicBool::new(false),
         closed: AtomicBool::new(false),
         detached: AtomicBool::new(false),
         retry_now: AtomicBool::new(false),
@@ -852,7 +985,8 @@ fn get(sessions: &State<'_, Sessions>, id: &str) -> Result<Arc<Session>, String>
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_exit_code, looks_like_prompt, strip_ansi, ExitKind};
+    use super::{classify_exit_status, looks_like_prompt, strip_ansi, ExitKind};
+    use portable_pty::ExitStatus;
 
     #[test]
     fn strip_ansi_preserva_multibyte() {
@@ -877,10 +1011,16 @@ mod tests {
     }
 
     #[test]
-    fn classifica_exit_code_para_reconexao() {
-        assert_eq!(classify_exit_code(Some(0)), ExitKind::Clean);
-        assert_eq!(classify_exit_code(Some(1)), ExitKind::Clean);
-        assert_eq!(classify_exit_code(Some(255)), ExitKind::Failure);
-        assert_eq!(classify_exit_code(None), ExitKind::Unknown);
+    fn classifica_exit_status_para_reconexao() {
+        let success = ExitStatus::with_exit_code(0);
+        let remote_failure = ExitStatus::with_exit_code(1);
+        let ssh_failure = ExitStatus::with_exit_code(255);
+        let killed = ExitStatus::with_signal("Killed");
+
+        assert_eq!(classify_exit_status(Some(&success)), ExitKind::Clean);
+        assert_eq!(classify_exit_status(Some(&remote_failure)), ExitKind::Clean);
+        assert_eq!(classify_exit_status(Some(&ssh_failure)), ExitKind::Failure);
+        assert_eq!(classify_exit_status(Some(&killed)), ExitKind::Failure);
+        assert_eq!(classify_exit_status(None), ExitKind::Unknown);
     }
 }
