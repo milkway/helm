@@ -27,7 +27,7 @@ jobs:
         run: npm run build
 
   rust:
-    name: Rust (clippy + check)
+    name: Rust (clippy + test)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -50,3 +50,6 @@ jobs:
           workspaces: src-tauri
       - name: Clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test
