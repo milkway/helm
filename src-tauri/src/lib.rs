@@ -33,6 +33,7 @@ pub fn run() {
             db::list_hosts,
             db::save_host,
             db::delete_host,
+            db::host_has_ssh_credential,
             db::get_pref,
             db::set_pref,
             vault::vault_status,

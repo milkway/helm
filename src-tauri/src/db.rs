@@ -117,6 +117,22 @@ pub(crate) fn has_ssh_password_credential(
     )
 }
 
+#[tauri::command]
+pub fn host_has_ssh_credential(db: State<'_, Db>, host_id: String) -> Result<bool, String> {
+    let conn = db.0.lock().unwrap();
+    let credential_id: Option<String> = conn
+        .query_row(
+            "SELECT credential_ref FROM hosts WHERE id = ?1",
+            [&host_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("host {host_id}: {e}"))?;
+    let Some(credential_id) = credential_id else {
+        return Ok(false);
+    };
+    has_ssh_password_credential(&conn, &credential_id).map_err(|e| e.to_string())
+}
+
 fn row_to_host(row: &rusqlite::Row) -> rusqlite::Result<Host> {
     Ok(Host {
         id: row.get(0)?,
