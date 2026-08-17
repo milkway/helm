@@ -4,23 +4,35 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub struct Vpn {
-    /// quantos hosts vivos usam cada perfil
-    refs: Mutex<HashMap<String, u32>>,
+    profiles: Mutex<HashMap<String, ProfileUsage>>,
+    transition_done: Condvar,
     /// auto-desconectar quando o refcount zera
     auto_disconnect: AtomicBool,
+}
+
+#[derive(Clone, Default)]
+struct ProfileUsage {
+    /// quantos hosts vivos usam o perfil
+    refs: u32,
+    /// a conexão atual foi iniciada automaticamente pelo Helm
+    connected_by_helm: bool,
+    /// identifica a transição bloqueante atual; outras operações aguardam
+    transitioning: Option<u64>,
+    generation: u64,
 }
 
 impl Default for Vpn {
     fn default() -> Self {
         Vpn {
-            refs: Mutex::new(HashMap::new()),
+            profiles: Mutex::new(HashMap::new()),
+            transition_done: Condvar::new(),
             auto_disconnect: AtomicBool::new(true),
         }
     }
@@ -85,7 +97,7 @@ fn backend_list() -> Result<Vec<(String, String)>, String> {
         if name.is_empty() {
             continue;
         }
-        let state = backend_state(name).unwrap_or_else(|_| "disconnected".into());
+        let state = backend_state(name)?;
         result.push((name.to_string(), state));
     }
     Ok(result)
@@ -129,6 +141,9 @@ fn backend_list() -> Result<Vec<(String, String)>, String> {
         .args(["-t", "-f", "NAME,TYPE,STATE", "connection", "show"])
         .output()
         .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
     let text = String::from_utf8_lossy(&out.stdout);
     let mut result = Vec::new();
     for line in text.lines() {
@@ -182,82 +197,161 @@ fn backend_disconnect(profile: &str) -> Result<(), String> {
 
 // ── Lógica comum ─────────────────────────────────────────────────────────
 
-fn snapshot(vpn: &Vpn) -> Vec<VpnProfile> {
-    let refs = vpn.refs.lock().unwrap().clone();
-    backend_list()
-        .unwrap_or_default()
+fn snapshot(vpn: &Vpn) -> Result<Vec<VpnProfile>, String> {
+    let refs: HashMap<String, u32> = vpn
+        .profiles
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(name, usage)| (name.clone(), usage.refs))
+        .collect();
+    Ok(backend_list()?
         .into_iter()
         .map(|(name, state)| VpnProfile {
             hosts_using: *refs.get(&name).unwrap_or(&0),
             name,
             state,
         })
-        .collect()
+        .collect())
+}
+
+fn emit_snapshot(app: &AppHandle, vpn: &Vpn) {
+    match snapshot(vpn) {
+        Ok(profiles) => emit_status(app, &profiles),
+        Err(error) => eprintln!("[vpn] falha ao listar perfis: {error}"),
+    }
 }
 
 /// Garante que o perfil esteja conectado (bloqueante, com poll até CONNECTED).
 /// Chamado pelo manager antes do SSH. Registra o uso (refcount++).
 pub fn acquire(app: &AppHandle, vpn: &Vpn, profile: &str) -> Result<(), String> {
+    let generation = {
+        let mut profiles = vpn.profiles.lock().unwrap();
+        while profiles
+            .get(profile)
+            .is_some_and(|usage| usage.transitioning.is_some())
+        {
+            profiles = vpn.transition_done.wait(profiles).unwrap();
+        }
+        let usage = profiles.entry(profile.to_string()).or_default();
+        usage.generation = usage.generation.wrapping_add(1);
+        usage.transitioning = Some(usage.generation);
+        usage.generation
+    };
+
     // NÃO registra o uso ainda: se a conexão falhar, o manager faz `return` sem
     // chamar `release`, então o refcount ficaria preso em 1 para sempre.
     // Incrementa só depois de confirmar CONNECTED.
-    if backend_state(profile)? != "connected" {
-        backend_connect(profile)?;
-        emit_status(app, &snapshot(vpn));
+    let mut initiated_connection = false;
+    let result = (|| {
+        if backend_state(profile)? != "connected" {
+            backend_connect(profile)?;
+            initiated_connection = true;
+            emit_snapshot(app, vpn);
 
-        let deadline = Instant::now() + Duration::from_secs(45);
-        loop {
-            std::thread::sleep(Duration::from_millis(600));
-            if backend_state(profile)? == "connected" {
-                break;
-            }
-            if Instant::now() >= deadline {
-                return Err(format!("VPN '{profile}' não conectou em 45s"));
+            let deadline = Instant::now() + Duration::from_secs(45);
+            loop {
+                std::thread::sleep(Duration::from_millis(600));
+                if backend_state(profile)? == "connected" {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    return Err(format!("VPN '{profile}' não conectou em 45s"));
+                }
             }
         }
-    }
+        Ok(())
+    })();
 
-    *vpn.refs.lock().unwrap().entry(profile.to_string()).or_insert(0) += 1;
-    emit_status(app, &snapshot(vpn));
-    Ok(())
+    {
+        let mut profiles = vpn.profiles.lock().unwrap();
+        let usage = profiles.entry(profile.to_string()).or_default();
+        if usage.transitioning == Some(generation) {
+            if initiated_connection {
+                usage.connected_by_helm = true;
+            }
+            if result.is_ok() {
+                usage.refs += 1;
+            }
+            usage.transitioning = None;
+        }
+    }
+    vpn.transition_done.notify_all();
+    emit_snapshot(app, vpn);
+    result
 }
 
 /// Libera o uso do perfil (refcount--); desconecta se zerou e auto está ligado.
 pub fn release(app: &AppHandle, vpn: &Vpn, profile: &str) {
-    let now = {
-        let mut refs = vpn.refs.lock().unwrap();
-        if let Some(c) = refs.get_mut(profile) {
-            *c = c.saturating_sub(1);
-            *c
+    let disconnect_generation = {
+        let mut profiles = vpn.profiles.lock().unwrap();
+        while profiles
+            .get(profile)
+            .is_some_and(|usage| usage.transitioning.is_some())
+        {
+            profiles = vpn.transition_done.wait(profiles).unwrap();
+        }
+
+        let usage = profiles.entry(profile.to_string()).or_default();
+        let was_in_use = usage.refs > 0;
+        usage.refs = usage.refs.saturating_sub(1);
+        if was_in_use
+            && usage.refs == 0
+            && usage.connected_by_helm
+            && vpn.auto_disconnect.load(Ordering::Relaxed)
+        {
+            usage.generation = usage.generation.wrapping_add(1);
+            usage.transitioning = Some(usage.generation);
+            Some(usage.generation)
         } else {
-            0
+            None
         }
     };
-    if now == 0 && vpn.auto_disconnect.load(Ordering::Relaxed) {
+
+    if let Some(generation) = disconnect_generation {
         // último host que usava o perfil fechou → desconecta
-        let _ = backend_disconnect(profile);
+        let result = backend_disconnect(profile);
+        {
+            let mut profiles = vpn.profiles.lock().unwrap();
+            let usage = profiles.entry(profile.to_string()).or_default();
+            if usage.transitioning == Some(generation) {
+                if result.is_ok() {
+                    usage.connected_by_helm = false;
+                }
+                usage.transitioning = None;
+            }
+        }
+        vpn.transition_done.notify_all();
+        if let Err(error) = result {
+            eprintln!("[vpn] falha ao desconectar '{profile}': {error}");
+        }
     }
-    emit_status(app, &snapshot(vpn));
+    emit_snapshot(app, vpn);
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn vpn_list(vpn: State<'_, Vpn>) -> Result<Vec<VpnProfile>, String> {
-    let refs = vpn.refs.lock().unwrap().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        backend_list()
-            .unwrap_or_default()
+    let refs: HashMap<String, u32> = vpn
+        .profiles
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(name, usage)| (name.clone(), usage.refs))
+        .collect();
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<VpnProfile>, String> {
+        Ok(backend_list()?
             .into_iter()
             .map(|(name, state)| VpnProfile {
                 hosts_using: *refs.get(&name).unwrap_or(&0),
                 name,
                 state,
             })
-            .collect()
+            .collect())
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -267,7 +361,7 @@ pub async fn vpn_connect(app: AppHandle, profile: String) -> Result<(), String> 
         .await
         .map_err(|e| e.to_string())??;
     if let Some(vpn) = app.try_state::<Vpn>() {
-        emit_status(&app, &snapshot(&vpn));
+        emit_snapshot(&app, &vpn);
     }
     Ok(())
 }
@@ -279,7 +373,10 @@ pub async fn vpn_disconnect(app: AppHandle, profile: String) -> Result<(), Strin
         .await
         .map_err(|e| e.to_string())??;
     if let Some(vpn) = app.try_state::<Vpn>() {
-        emit_status(&app, &snapshot(&vpn));
+        if let Some(usage) = vpn.profiles.lock().unwrap().get_mut(&profile) {
+            usage.connected_by_helm = false;
+        }
+        emit_snapshot(&app, &vpn);
     }
     Ok(())
 }

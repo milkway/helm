@@ -26,8 +26,12 @@ export const useVpnStore = create<VpnState>((set, get) => ({
   panelOpen: false,
 
   load: async () => {
-    const [profiles, autoDisconnect] = await Promise.all([vpnList(), vpnGetAutoDisconnect()]);
-    set({ profiles, autoDisconnect });
+    try {
+      const [profiles, autoDisconnect] = await Promise.all([vpnList(), vpnGetAutoDisconnect()]);
+      set({ profiles, autoDisconnect });
+    } catch (error) {
+      console.error("[vpn] Failed to load VPN profiles", error);
+    }
   },
 
   connect: async (name) => {
@@ -35,12 +39,20 @@ export const useVpnStore = create<VpnState>((set, get) => ({
     set((s) => ({
       profiles: s.profiles.map((p) => (p.name === name ? { ...p, state: "connecting" } : p)),
     }));
-    await vpnConnect(name).catch(() => {});
+    try {
+      await vpnConnect(name);
+    } catch (error) {
+      console.error(`[vpn] Failed to connect "${name}"`, error);
+    }
     await get().load();
   },
 
   disconnect: async (name) => {
-    await vpnDisconnect(name).catch(() => {});
+    try {
+      await vpnDisconnect(name);
+    } catch (error) {
+      console.error(`[vpn] Failed to disconnect "${name}"`, error);
+    }
     await get().load();
   },
 
