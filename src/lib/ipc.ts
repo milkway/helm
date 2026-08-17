@@ -80,6 +80,10 @@ export function deleteHost(id: string): Promise<void> {
   return invoke("delete_host", { id });
 }
 
+export function hostHasSshCredential(hostId: string): Promise<boolean> {
+  return invoke("host_has_ssh_credential", { hostId });
+}
+
 export function importSshConfig(): Promise<number> {
   return invoke("import_ssh_config");
 }

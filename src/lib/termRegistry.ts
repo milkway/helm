@@ -9,6 +9,7 @@ import {
   closeSession,
   detectRemote,
   detachSession,
+  hostHasSshCredential,
   installTmux,
   onAttention,
   onSessionOutput,
@@ -23,11 +24,7 @@ import {
 import { useSessionsStore } from "../stores/sessions";
 import { useHostsStore } from "../stores/hosts";
 import { useUiStore } from "../stores/ui";
-import {
-  isSshPasswordCredential,
-  isSudoCredential,
-  useVaultStore,
-} from "../stores/vault";
+import { isSudoCredential, useVaultStore } from "../stores/vault";
 import { sessionUsesTmux, tmuxSessionName, type Host, type SessionStatus } from "../types";
 
 const THEME = {
@@ -195,15 +192,20 @@ async function prepareSshPassword(hostId: string, abort: ConnectAbort): Promise<
   const host = useHostsStore.getState().hosts.find((item) => item.id === hostId);
   if (!host?.credentialRef) return;
 
-  const vault = useVaultStore.getState();
-  const credential = vault.creds.find((cred) => cred.id === host.credentialRef);
-  // Se a metadata já está em memória, não abra o cofre para uma
-  // credencial incompatível. Num início com o cofre bloqueado a lista ainda
-  // não foi carregada; o Rust fará a validação definitiva depois do unlock.
-  if (credential && !isSshPasswordCredential(credential)) return;
-  if (!credential && !vault.locked) return;
+  if (useVaultStore.getState().locked) {
+    let eligible: boolean;
+    try {
+      eligible = await hostHasSshCredential(hostId);
+    } catch {
+      throwIfAborted(abort);
+      // Falha ao consultar metadata não bloqueia o SSH: segue interativo.
+      return;
+    }
+    throwIfAborted(abort);
+    if (!eligible) return;
 
-  if (vault.locked) {
+    const vault = useVaultStore.getState();
+    if (!vault.locked) return;
     // unlock trata recusa/cancelamento sem lançar; a conexão segue e o ssh
     // oferece digitação interativa quando o cofre continuar bloqueado.
     try {
@@ -303,13 +305,16 @@ async function prepareTmux(
 
   const inflight = tmuxInstallations.get(hostId);
   if (inflight) {
+    let ready: boolean;
     try {
-      await inflight;
+      ready = await inflight;
     } catch {
-      // O dono trata falha/ação manual; esta aba segue para o erro normal da conexão.
+      // Preserva o fallback existente para rejeições da instalação em voo.
+      throwIfAborted(abort);
+      return true;
     }
     throwIfAborted(abort);
-    return true;
+    return ready;
   }
 
   const installation = runTmuxInstallation(uiId, hostId, host, abort);
