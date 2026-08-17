@@ -3,10 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { Host, SessionStatus } from "../types";
 
-export function openLocalSession(id: string, cols: number, rows: number): Promise<void> {
-  return invoke("open_local_session", { id, cols, rows });
-}
-
 export interface SessionParams {
   mode: "shell" | "tmux" | "clmux";
   sessionName?: string;

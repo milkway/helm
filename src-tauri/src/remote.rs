@@ -225,11 +225,33 @@ pub async fn install_tmux(
     // Zeroizing zera a memória da senha ao sair do escopo (fim do closure).
     let password: Option<Zeroizing<String>> = match (&auth.credential_id, &auth.password) {
         (Some(cred_id), _) => {
-            // NOPASSWD (só-metadados) → sem senha; senão busca no keyring
-            match vault::get_secret(&db, &vault, cred_id) {
-                Ok(secret) => Some(Zeroizing::new(secret)),
-                Err(e) if e.contains("No matching entry") => None,
-                Err(e) => return Err(e),
+            let (kind, scope, has_secret): (String, Option<String>, bool) = {
+                let conn = db.0.lock().unwrap();
+                conn.query_row(
+                    "SELECT kind, scope, has_secret FROM credentials_meta WHERE id = ?1",
+                    [cred_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => {
+                        format!("credencial não encontrada no Vault: {cred_id}")
+                    }
+                    e => format!("falha ao consultar credencial do Vault: {e}"),
+                })?
+            };
+            if kind != "password" {
+                return Err("credencial de sudo deve ser do tipo password".into());
+            }
+            let sudo_scope = scope
+                .as_deref()
+                .is_some_and(|scope| scope.to_lowercase().contains("sudo") || scope == "NOPASSWD");
+            if !sudo_scope {
+                return Err("credencial sem escopo compatível com sudo".into());
+            }
+            if has_secret {
+                Some(Zeroizing::new(vault::get_secret(&db, &vault, cred_id)?))
+            } else {
+                None
             }
         }
         (None, Some(pwd)) if !pwd.is_empty() => Some(Zeroizing::new(pwd.clone())),
