@@ -11,7 +11,6 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .manage(manager::Sessions::default())
         .setup(|app| {
             let conn = db::open(app.handle()).map_err(std::io::Error::other)?;
@@ -24,7 +23,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            manager::open_local_session,
             manager::open_ssh_session,
             manager::write_stdin,
             manager::resize_pty,

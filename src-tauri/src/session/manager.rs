@@ -479,18 +479,6 @@ fn start_session(
 }
 
 #[tauri::command]
-pub fn open_local_session(
-    app: AppHandle,
-    sessions: State<'_, Sessions>,
-    id: String,
-    cols: u16,
-    rows: u16,
-) -> Result<(), String> {
-    start_session(app, &sessions, id, None, cols, rows, None);
-    Ok(())
-}
-
-#[tauri::command]
 #[allow(clippy::too_many_arguments)] // comando Tauri: injeções de State + params
 pub fn open_ssh_session(
     app: AppHandle,

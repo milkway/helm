@@ -13,7 +13,11 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::db::Db;
 
-const KEYRING_SERVICE: &str = "io.github.milkway.helm";
+const KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
+    "io.github.milkway.helm.dev"
+} else {
+    "io.github.milkway.helm"
+};
 const AUTO_LOCK: Duration = Duration::from_secs(15 * 60);
 
 pub struct Vault(pub Arc<VaultInner>);
