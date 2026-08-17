@@ -7,7 +7,7 @@ Gerenciador desktop de terminais SSH (macOS + Linux). Tauri 2 + React 19 + xterm
 - **Dev:** `npm install` && `npm run tauri dev` (janela nativa; front em `localhost:1420`).
 - **Typecheck (SEMPRE antes de relançar):** `npx tsc --noEmit`. O Vite **não** faz checagem de tipos — imports/erros só aparecem em runtime (ex.: `useState` esquecido → tela preta). Rode o `tsc` antes de qualquer relançamento do dev.
 - **Rust:** `cd src-tauri && cargo check` / `cargo clippy --all-targets -- -D warnings` (o CI usa `-D warnings`).
-- **Testes:** `cd src-tauri && cargo test` (existem desde a v0.2.1: `strip_ansi`/`looks_like_prompt` em `manager.rs`, migrações em `db.rs`). Ainda não há testes no front.
+- **Testes:** `cd src-tauri && cargo test` (strip_ansi/prompt, migrações, askpass, classificação de exit code). Front: `npm test` (Vitest: paridade i18n, stores com Tauri mockado, base64 do ipc). Ambos rodam no CI.
 - **Build app:** `npm run tauri build` (.dmg em `src-tauri/target/release/bundle/`).
 - **Build .deb:** `scripts/build-deb-remote.sh` (SSH na máquina `prompt`, Ubuntu 22.04) ou `scripts/build-deb.sh` (Docker).
 - **Site:** `cd site && npm install && npm run build`.
