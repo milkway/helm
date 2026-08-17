@@ -76,7 +76,7 @@ export function CommandPalette() {
         label: h?.name ?? s.hostId,
         sub: `${h ? (h.user ? `${h.user}@${h.host}` : h.host) : ""} · ${sessionStatusText(s, t)}`,
         hint: t("pal.open"),
-        dotColor: s.attention ? "#f0785a" : statusColor(s.status),
+        dotColor: s.attention ? "var(--st-attention)" : statusColor(s.status),
         run: () => {
           focus(s.id);
           togglePalette(false);
@@ -209,7 +209,7 @@ export function CommandPalette() {
     <div className="modal-backdrop palette-backdrop" onClick={() => togglePalette(false)}>
       <div className="palette" onClick={(e) => e.stopPropagation()}>
         <div className="palette__header">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7d848d" strokeWidth="2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2">
             <circle cx="11" cy="11" r="7" />
             <path d="M21 21l-4-4" />
           </svg>

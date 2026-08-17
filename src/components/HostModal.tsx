@@ -93,11 +93,11 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
       <div className="hxm" onClick={(e) => e.stopPropagation()}>
         <div className="hxm__header">
           <div className="hxm__icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="1.8">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8">
               <rect x="3" y="4" width="18" height="7" rx="2" />
               <rect x="3" y="13" width="18" height="7" rx="2" />
-              <circle cx="7" cy="7.5" r="1" fill="#e0a15e" stroke="none" />
-              <circle cx="7" cy="16.5" r="1" fill="#e0a15e" stroke="none" />
+              <circle cx="7" cy="7.5" r="1" fill="var(--accent)" stroke="none" />
+              <circle cx="7" cy="16.5" r="1" fill="var(--accent)" stroke="none" />
             </svg>
           </div>
           <div className="hxm__titles">
@@ -154,7 +154,7 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
             <div className="hxm__label">{t("hm.auth")}</div>
             {vault.locked ? (
               <div className="hxm__cred hxm__cred--locked" onClick={() => void vault.unlock()}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="1.8">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8">
                   <rect x="4" y="10" width="16" height="11" rx="2" />
                   <path d="M8 10V7a4 4 0 0 1 8 0v3" />
                 </svg>

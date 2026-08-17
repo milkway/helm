@@ -1,5 +1,6 @@
 pub mod askpass;
 mod db;
+mod external;
 mod remote;
 mod session;
 mod sshconfig;
@@ -36,6 +37,8 @@ pub fn run() {
             db::host_has_ssh_credential,
             db::get_pref,
             db::set_pref,
+            external::open_external,
+            external::check_updates,
             vault::vault_status,
             vault::vault_unlock,
             vault::vault_lock,

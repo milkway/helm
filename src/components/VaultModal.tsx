@@ -92,7 +92,7 @@ function CredRow({ cred }: { cred: CredMeta }) {
             height="14"
             viewBox="0 0 24 24"
             fill="none"
-            stroke={secret ? "#e0a15e" : "#565c64"}
+            stroke={secret ? "var(--accent)" : "var(--st-idle)"}
             strokeWidth="1.8"
             style={{ cursor: "pointer", flex: "none" }}
             onClick={doReveal}
@@ -301,7 +301,7 @@ export function VaultModal() {
       <div className="vault-modal" onClick={(e) => e.stopPropagation()}>
         <div className="vault-modal__header">
           <div className="vault-modal__icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="1.8">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8">
               <rect x="4" y="10" width="16" height="11" rx="2" />
               <path d="M8 10V7a4 4 0 0 1 8 0v3" />
             </svg>
@@ -314,7 +314,7 @@ export function VaultModal() {
           </div>
           {!locked && (
             <div className="vault-modal__lock" onClick={() => void lock()}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#a2a8b0" strokeWidth="2">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" strokeWidth="2">
                 <rect x="4" y="10" width="16" height="11" rx="2" />
                 <path d="M8 10V7a4 4 0 0 1 8 0v3" />
               </svg>
@@ -338,7 +338,7 @@ export function VaultModal() {
           <>
             <div className="vault-modal__search-wrap">
               <div className="vault-modal__search">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#565c64" strokeWidth="2">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--st-idle)" strokeWidth="2">
                   <circle cx="11" cy="11" r="7" />
                   <path d="M21 21l-4-4" />
                 </svg>

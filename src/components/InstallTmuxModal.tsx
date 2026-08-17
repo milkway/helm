@@ -107,7 +107,7 @@ export function InstallTmuxModal({
       <div className="hxm" style={{ width: 540 }} onClick={(e) => e.stopPropagation()}>
         <div className="hxm__header">
           <div className="hxm__icon hxm__icon--green">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#63d29b" strokeWidth="1.8">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--st-connected)" strokeWidth="1.8">
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <path d="M3 9h18M9 21V9" />
             </svg>
@@ -125,12 +125,12 @@ export function InstallTmuxModal({
 
         <div className="hxm__body">
           <div className="hxm__detect">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7d848d" strokeWidth="1.8">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="1.8">
               <circle cx="12" cy="12" r="9" />
               <path d="M12 8v4l2.5 2.5" />
             </svg>
             {detectErr ? (
-              <span style={{ color: "#f0785a" }}>{detectErr}</span>
+              <span style={{ color: "var(--st-attention-text)" }}>{detectErr}</span>
             ) : info ? (
               <>
                 {t("it.detected")} <span className="hxm__detect-val">{info.os ?? "?"} · {info.pkgManager ?? t("it.noPm")}</span>
@@ -185,7 +185,7 @@ export function InstallTmuxModal({
                   </div>
                 </div>
                 <span className="hxm__badge hxm__badge--amber">
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#e0a15e" strokeWidth="2">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
                     <path d="M12 11a4 4 0 0 1 4 4v0M12 11a4 4 0 0 0-4 4v2a4 4 0 0 0 8 0" />
                     <path d="M12 3a7 7 0 0 1 7 7v1M12 3a7 7 0 0 0-7 7v4" />
                   </svg>
@@ -211,7 +211,7 @@ export function InstallTmuxModal({
           </div>
 
           <div className="hxm__note">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#63d29b" strokeWidth="1.8" style={{ flex: "none", marginTop: 1 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--st-connected)" strokeWidth="1.8" style={{ flex: "none", marginTop: 1 }}>
               <rect x="4" y="10" width="16" height="11" rx="2" />
               <path d="M8 10V7a4 4 0 0 1 8 0v3" />
             </svg>
