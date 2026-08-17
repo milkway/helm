@@ -754,6 +754,13 @@ fn manager_loop(
     }
 }
 
+/// Credenciais resolvidas no open, guardadas na sessão para reconexão/sudo.
+#[derive(Default)]
+struct SessionAuth {
+    askpass_secret: Option<Zeroizing<String>>,
+    sudo_credential_id: Option<String>,
+}
+
 fn start_session(
     app: AppHandle,
     sessions: &State<'_, Sessions>,
@@ -761,12 +768,11 @@ fn start_session(
     host: Option<Host>,
     size: (u16, u16),
     params: Option<SessionParams>,
-    askpass_secret: Option<Zeroizing<String>>,
-    sudo_credential_id: Option<String>,
+    auth: SessionAuth,
 ) {
     let session = Arc::new(Session {
         host_id: host.as_ref().map(|h| h.id.clone()),
-        askpass_secret,
+        askpass_secret: auth.askpass_secret,
         askpass_disabled: AtomicBool::new(false),
         closed: AtomicBool::new(false),
         detached: AtomicBool::new(false),
@@ -777,7 +783,7 @@ fn start_session(
         connected: AtomicBool::new(false),
         attention: AtomicBool::new(false),
         sudo_prompt: AtomicBool::new(false),
-        sudo_credential_id,
+        sudo_credential_id: auth.sudo_credential_id,
         output_tail: Mutex::new(String::new()),
         last_output: Mutex::new(Instant::now()),
         last_input: Mutex::new(Instant::now()),
@@ -859,18 +865,11 @@ pub fn open_ssh_session(
     if params.as_ref().is_some_and(|params| params.mode == "clmux") {
         agent_binary(params.as_ref().and_then(|params| params.agent.as_deref()))?;
     }
-    let askpass_secret = resolve_ssh_password(&db, &vault, &host);
-    let sudo_credential_id = resolve_sudo_credential(&db, &host);
-    start_session(
-        app,
-        &sessions,
-        id,
-        Some(host),
-        (cols, rows),
-        params,
-        askpass_secret,
-        sudo_credential_id,
-    );
+    let auth = SessionAuth {
+        askpass_secret: resolve_ssh_password(&db, &vault, &host),
+        sudo_credential_id: resolve_sudo_credential(&db, &host),
+    };
+    start_session(app, &sessions, id, Some(host), (cols, rows), params, auth);
     Ok(())
 }
 
@@ -891,6 +890,10 @@ pub fn authorize_sudo(
         .as_deref()
         .ok_or("a sessão não tem credencial sudo elegível")?;
 
+    // Busca o segredo ANTES de segurar o lock da cauda: o I/O do keychain
+    // (securityd) pode demorar e não deve bloquear a thread leitora do PTY.
+    let secret = Zeroizing::new(vault::get_secret(&db, &vault, credential_id)?);
+
     // Mantém a cauda estável entre a revalidação e a injeção. Assim, output
     // concorrente não pode transformar o clique em autorização de um prompt
     // já obsoleto.
@@ -898,7 +901,6 @@ pub fn authorize_sudo(
     if !is_active_sudo_prompt(&tail) {
         return Err("o prompt de sudo não está mais ativo".into());
     }
-    let secret = Zeroizing::new(vault::get_secret(&db, &vault, credential_id)?);
     let mut writer = session.writer.lock().unwrap();
     let writer = writer.as_mut().ok_or("sessão sem PTY ativo")?;
     writer.write_all(secret.as_bytes()).map_err(|e| e.to_string())?;
