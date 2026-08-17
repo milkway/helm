@@ -15,11 +15,7 @@ use zeroize::Zeroizing;
 
 use crate::db::Db;
 
-const KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
-    "io.github.milkway.helm.dev"
-} else {
-    "io.github.milkway.helm"
-};
+const KEYRING_SERVICE: &str = "io.github.milkway.helm";
 const AUTO_LOCK: Duration = Duration::from_secs(15 * 60);
 
 pub struct Vault(pub Arc<VaultInner>);
@@ -297,6 +293,7 @@ pub fn vault_save(
             .map_err(|e| format!("falha ao confirmar metadata no SQLite: {e}"))?;
         previous
     };
+    drop(conn);
 
     let keyring_result: Result<(), keyring::Error> = (|| {
         let entry = keyring::Entry::new(KEYRING_SERVICE, &meta.id)?;
@@ -315,6 +312,7 @@ pub fn vault_save(
     if let Err(keyring_error) = keyring_result {
         let keyring_action = if has_secret { "gravar" } else { "remover" };
         let compensation = (|| -> rusqlite::Result<()> {
+            let mut conn = db.0.lock().unwrap();
             let tx = conn.transaction()?;
             if let Some(previous) = &previous {
                 tx.execute(
@@ -347,8 +345,6 @@ pub fn vault_save(
             )),
         };
     }
-
-    drop(conn);
 
     emit_vault_status(&app, false, count_creds(&db));
     Ok(())

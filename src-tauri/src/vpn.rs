@@ -21,9 +21,11 @@ pub struct Vpn {
 struct ProfileUsage {
     /// quantos hosts vivos usam o perfil
     refs: u32,
+    /// releases recebidos enquanto outra operação bloqueante está em andamento
+    pending_releases: u32,
     /// a conexão atual foi iniciada automaticamente pelo Helm
     connected_by_helm: bool,
-    /// identifica a transição bloqueante atual; outras operações aguardam
+    /// identifica a transição bloqueante atual; releases são acumulados
     transitioning: Option<u64>,
     generation: u64,
 }
@@ -48,7 +50,9 @@ pub struct VpnProfile {
 }
 
 fn emit_status(app: &AppHandle, profiles: &[VpnProfile]) {
-    let _ = app.emit("vpn-status", profiles);
+    if let Err(error) = app.emit("vpn-status", profiles) {
+        eprintln!("[vpn] falha ao emitir status: {error}");
+    }
 }
 
 // ── Backend macOS: Tunnelblick via osascript ─────────────────────────────
@@ -90,14 +94,19 @@ fn run_osascript_with_profile(body: &str, profile: &str) -> Result<String, Strin
 
 #[cfg(target_os = "macos")]
 fn backend_list() -> Result<Vec<(String, String)>, String> {
-    let names = run_osascript("tell application \"Tunnelblick\" to get name of configurations")?;
+    let names = run_osascript(
+        "tell application \"Tunnelblick\"\nset configurationNames to name of configurations\nend tell\nset AppleScript's text item delimiters to linefeed\nreturn configurationNames as text",
+    )?;
     let mut result = Vec::new();
-    for name in names.split(", ") {
+    for name in names.lines() {
         let name = name.trim();
         if name.is_empty() {
             continue;
         }
-        let state = backend_state(name)?;
+        let state = backend_state(name).unwrap_or_else(|error| {
+            eprintln!("[vpn] falha ao consultar estado de '{name}': {error}");
+            "disconnected".into()
+        });
         result.push((name.to_string(), state));
     }
     Ok(result)
@@ -203,7 +212,12 @@ fn snapshot(vpn: &Vpn) -> Result<Vec<VpnProfile>, String> {
         .lock()
         .unwrap()
         .iter()
-        .map(|(name, usage)| (name.clone(), usage.refs))
+        .map(|(name, usage)| {
+            (
+                name.clone(),
+                usage.refs.saturating_sub(usage.pending_releases),
+            )
+        })
         .collect();
     Ok(backend_list()?
         .into_iter()
@@ -216,116 +230,206 @@ fn snapshot(vpn: &Vpn) -> Result<Vec<VpnProfile>, String> {
 }
 
 fn emit_snapshot(app: &AppHandle, vpn: &Vpn) {
-    match snapshot(vpn) {
-        Ok(profiles) => emit_status(app, &profiles),
-        Err(error) => eprintln!("[vpn] falha ao listar perfis: {error}"),
-    }
+    let profiles = snapshot(vpn).unwrap_or_else(|error| {
+        eprintln!("[vpn] falha ao listar perfis: {error}");
+        vpn.profiles
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(name, usage)| VpnProfile {
+                name: name.clone(),
+                state: "disconnected".into(),
+                hosts_using: usage.refs.saturating_sub(usage.pending_releases),
+            })
+            .collect()
+    });
+    emit_status(app, &profiles);
 }
 
-/// Garante que o perfil esteja conectado (bloqueante, com poll até CONNECTED).
-/// Chamado pelo manager antes do SSH. Registra o uso (refcount++).
-pub fn acquire(app: &AppHandle, vpn: &Vpn, profile: &str) -> Result<(), String> {
-    let generation = {
+#[derive(Clone, Copy)]
+enum TransitionBehavior {
+    Wait,
+    DeferRelease,
+}
+
+enum TransitionOutcome {
+    Completed(Result<(), String>),
+    Deferred,
+}
+
+struct TransitionUpdate {
+    result: Result<(), String>,
+    refs_added: u32,
+    refs_released: u32,
+    connected_by_helm: Option<bool>,
+    check_auto_disconnect: bool,
+}
+
+/// Serializa uma mutação por perfil. O mutex fica solto durante o trabalho
+/// bloqueante; a geração protege a finalização contra resultados obsoletos.
+/// Releases concorrentes nunca esperam: o dono atual os aplica ao finalizar.
+fn with_transition(
+    vpn: &Vpn,
+    profile: &str,
+    behavior: TransitionBehavior,
+    operation: impl FnOnce(&ProfileUsage) -> TransitionUpdate,
+) -> TransitionOutcome {
+    let (generation, initial) = {
         let mut profiles = vpn.profiles.lock().unwrap();
-        while profiles
-            .get(profile)
-            .is_some_and(|usage| usage.transitioning.is_some())
-        {
-            profiles = vpn.transition_done.wait(profiles).unwrap();
+        loop {
+            let transitioning = profiles
+                .get(profile)
+                .is_some_and(|usage| usage.transitioning.is_some());
+            if !transitioning {
+                break;
+            }
+            match behavior {
+                TransitionBehavior::Wait => {
+                    profiles = vpn.transition_done.wait(profiles).unwrap();
+                }
+                TransitionBehavior::DeferRelease => {
+                    let usage = profiles.entry(profile.to_string()).or_default();
+                    usage.pending_releases = usage.pending_releases.saturating_add(1);
+                    return TransitionOutcome::Deferred;
+                }
+            }
         }
+
         let usage = profiles.entry(profile.to_string()).or_default();
         usage.generation = usage.generation.wrapping_add(1);
         usage.transitioning = Some(usage.generation);
-        usage.generation
+        (usage.generation, usage.clone())
     };
 
-    // NÃO registra o uso ainda: se a conexão falhar, o manager faz `return` sem
-    // chamar `release`, então o refcount ficaria preso em 1 para sempre.
-    // Incrementa só depois de confirmar CONNECTED.
-    let mut initiated_connection = false;
-    let result = (|| {
-        if backend_state(profile)? != "connected" {
-            backend_connect(profile)?;
-            initiated_connection = true;
-            emit_snapshot(app, vpn);
+    let update = operation(&initial);
+    let TransitionUpdate {
+        result,
+        refs_added,
+        refs_released,
+        connected_by_helm,
+        check_auto_disconnect,
+    } = update;
 
-            let deadline = Instant::now() + Duration::from_secs(45);
-            loop {
-                std::thread::sleep(Duration::from_millis(600));
-                if backend_state(profile)? == "connected" {
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    return Err(format!("VPN '{profile}' não conectou em 45s"));
-                }
-            }
-        }
-        Ok(())
-    })();
-
-    {
+    let should_disconnect = {
         let mut profiles = vpn.profiles.lock().unwrap();
         let usage = profiles.entry(profile.to_string()).or_default();
-        if usage.transitioning == Some(generation) {
-            if initiated_connection {
-                usage.connected_by_helm = true;
-            }
-            if result.is_ok() {
-                usage.refs += 1;
-            }
-            usage.transitioning = None;
-        }
-    }
-    vpn.transition_done.notify_all();
-    emit_snapshot(app, vpn);
-    result
-}
-
-/// Libera o uso do perfil (refcount--); desconecta se zerou e auto está ligado.
-pub fn release(app: &AppHandle, vpn: &Vpn, profile: &str) {
-    let disconnect_generation = {
-        let mut profiles = vpn.profiles.lock().unwrap();
-        while profiles
-            .get(profile)
-            .is_some_and(|usage| usage.transitioning.is_some())
-        {
-            profiles = vpn.transition_done.wait(profiles).unwrap();
-        }
-
-        let usage = profiles.entry(profile.to_string()).or_default();
-        let was_in_use = usage.refs > 0;
-        usage.refs = usage.refs.saturating_sub(1);
-        if was_in_use
-            && usage.refs == 0
-            && usage.connected_by_helm
-            && vpn.auto_disconnect.load(Ordering::Relaxed)
-        {
-            usage.generation = usage.generation.wrapping_add(1);
-            usage.transitioning = Some(usage.generation);
-            Some(usage.generation)
+        if usage.transitioning != Some(generation) {
+            eprintln!("[vpn] resultado obsoleto da transição de '{profile}' ignorado");
+            false
         } else {
-            None
+            usage.refs = usage.refs.saturating_add(refs_added);
+            usage.refs = usage.refs.saturating_sub(refs_released);
+            if let Some(connected_by_helm) = connected_by_helm {
+                usage.connected_by_helm = connected_by_helm;
+            }
+
+            let pending_releases = std::mem::take(&mut usage.pending_releases);
+            usage.refs = usage.refs.saturating_sub(pending_releases);
+            let should_disconnect = (check_auto_disconnect || pending_releases > 0)
+                && usage.refs == 0
+                && usage.connected_by_helm
+                && vpn.auto_disconnect.load(Ordering::Relaxed);
+            if !should_disconnect {
+                usage.transitioning = None;
+            }
+            should_disconnect
         }
     };
 
-    if let Some(generation) = disconnect_generation {
-        // último host que usava o perfil fechou → desconecta
-        let result = backend_disconnect(profile);
+    if should_disconnect {
+        let disconnect_result = backend_disconnect(profile);
         {
             let mut profiles = vpn.profiles.lock().unwrap();
             let usage = profiles.entry(profile.to_string()).or_default();
             if usage.transitioning == Some(generation) {
-                if result.is_ok() {
+                let pending_releases = std::mem::take(&mut usage.pending_releases);
+                usage.refs = usage.refs.saturating_sub(pending_releases);
+                if disconnect_result.is_ok() {
                     usage.connected_by_helm = false;
                 }
                 usage.transitioning = None;
             }
         }
-        vpn.transition_done.notify_all();
-        if let Err(error) = result {
+        if let Err(error) = disconnect_result {
             eprintln!("[vpn] falha ao desconectar '{profile}': {error}");
         }
     }
+
+    vpn.transition_done.notify_all();
+    TransitionOutcome::Completed(result)
+}
+
+/// Garante que o perfil esteja conectado (bloqueante, com poll até CONNECTED).
+/// Chamado pelo manager antes do SSH. Registra o uso (refcount++).
+pub fn acquire(app: &AppHandle, vpn: &Vpn, profile: &str) -> Result<(), String> {
+    // NÃO registra o uso ainda: se a conexão falhar, o manager faz `return` sem
+    // chamar `release`, então o refcount ficaria preso em 1 para sempre.
+    // Incrementa só depois de confirmar CONNECTED.
+    let outcome = with_transition(
+        vpn,
+        profile,
+        TransitionBehavior::Wait,
+        |_| {
+            let mut initiated_connection = false;
+            let result = (|| {
+                if backend_state(profile)? != "connected" {
+                    backend_connect(profile)?;
+                    initiated_connection = true;
+                    emit_snapshot(app, vpn);
+
+                    let deadline = Instant::now() + Duration::from_secs(45);
+                    loop {
+                        std::thread::sleep(Duration::from_millis(600));
+                        if backend_state(profile)? == "connected" {
+                            break;
+                        }
+                        if Instant::now() >= deadline {
+                            return Err(format!("VPN '{profile}' não conectou em 45s"));
+                        }
+                    }
+                }
+                Ok(())
+            })();
+
+            if initiated_connection && result.is_err() {
+                if let Err(error) = backend_disconnect(profile) {
+                    eprintln!(
+                        "[vpn] falha ao desfazer conexão incompleta de '{profile}': {error}"
+                    );
+                }
+            }
+
+            let connected = result.is_ok();
+            TransitionUpdate {
+                result,
+                refs_added: if connected { 1 } else { 0 },
+                refs_released: 0,
+                connected_by_helm: initiated_connection.then_some(connected),
+                check_auto_disconnect: false,
+            }
+        },
+    );
+    emit_snapshot(app, vpn);
+    match outcome {
+        TransitionOutcome::Completed(result) => result,
+        TransitionOutcome::Deferred => unreachable!("acquire nunca adia sua transição"),
+    }
+}
+
+/// Libera o uso do perfil (refcount--); desconecta se zerou e auto está ligado.
+pub fn release(app: &AppHandle, vpn: &Vpn, profile: &str) {
+    let _ = with_transition(
+        vpn,
+        profile,
+        TransitionBehavior::DeferRelease,
+        |initial| TransitionUpdate {
+            result: Ok(()),
+            refs_added: 0,
+            refs_released: 1,
+            connected_by_helm: None,
+            check_auto_disconnect: initial.refs > 0,
+        },
+    );
     emit_snapshot(app, vpn);
 }
 
@@ -338,7 +442,12 @@ pub async fn vpn_list(vpn: State<'_, Vpn>) -> Result<Vec<VpnProfile>, String> {
         .lock()
         .unwrap()
         .iter()
-        .map(|(name, usage)| (name.clone(), usage.refs))
+        .map(|(name, usage)| {
+            (
+                name.clone(),
+                usage.refs.saturating_sub(usage.pending_releases),
+            )
+        })
         .collect();
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<VpnProfile>, String> {
         Ok(backend_list()?
@@ -356,10 +465,27 @@ pub async fn vpn_list(vpn: State<'_, Vpn>) -> Result<Vec<VpnProfile>, String> {
 
 #[tauri::command]
 pub async fn vpn_connect(app: AppHandle, profile: String) -> Result<(), String> {
+    let worker_app = app.clone();
     let p = profile.clone();
-    tauri::async_runtime::spawn_blocking(move || backend_connect(&p))
-        .await
-        .map_err(|e| e.to_string())??;
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let vpn = worker_app
+            .try_state::<Vpn>()
+            .ok_or_else(|| "estado de VPN indisponível".to_string())?;
+        match with_transition(&vpn, &p, TransitionBehavior::Wait, |_| {
+            TransitionUpdate {
+                result: backend_connect(&p),
+                refs_added: 0,
+                refs_released: 0,
+                connected_by_helm: None,
+                check_auto_disconnect: false,
+            }
+        }) {
+            TransitionOutcome::Completed(result) => result,
+            TransitionOutcome::Deferred => unreachable!("vpn_connect nunca adia sua transição"),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     if let Some(vpn) = app.try_state::<Vpn>() {
         emit_snapshot(&app, &vpn);
     }
@@ -368,14 +494,32 @@ pub async fn vpn_connect(app: AppHandle, profile: String) -> Result<(), String> 
 
 #[tauri::command]
 pub async fn vpn_disconnect(app: AppHandle, profile: String) -> Result<(), String> {
+    let worker_app = app.clone();
     let p = profile.clone();
-    tauri::async_runtime::spawn_blocking(move || backend_disconnect(&p))
-        .await
-        .map_err(|e| e.to_string())??;
-    if let Some(vpn) = app.try_state::<Vpn>() {
-        if let Some(usage) = vpn.profiles.lock().unwrap().get_mut(&profile) {
-            usage.connected_by_helm = false;
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let vpn = worker_app
+            .try_state::<Vpn>()
+            .ok_or_else(|| "estado de VPN indisponível".to_string())?;
+        match with_transition(&vpn, &p, TransitionBehavior::Wait, |_| {
+            let result = backend_disconnect(&p);
+            let disconnected = result.is_ok();
+            TransitionUpdate {
+                result,
+                refs_added: 0,
+                refs_released: 0,
+                connected_by_helm: disconnected.then_some(false),
+                check_auto_disconnect: false,
+            }
+        }) {
+            TransitionOutcome::Completed(result) => result,
+            TransitionOutcome::Deferred => {
+                unreachable!("vpn_disconnect nunca adia sua transição")
+            }
         }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if let Some(vpn) = app.try_state::<Vpn>() {
         emit_snapshot(&app, &vpn);
     }
     Ok(())
