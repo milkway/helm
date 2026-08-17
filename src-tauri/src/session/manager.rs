@@ -571,8 +571,7 @@ fn start_session(
     sessions: &State<'_, Sessions>,
     id: String,
     host: Option<Host>,
-    cols: u16,
-    rows: u16,
+    size: (u16, u16),
     params: Option<SessionParams>,
     askpass_secret: Option<Zeroizing<String>>,
 ) {
@@ -582,7 +581,7 @@ fn start_session(
         closed: AtomicBool::new(false),
         detached: AtomicBool::new(false),
         retry_now: AtomicBool::new(false),
-        size: Mutex::new((cols, rows)),
+        size: Mutex::new(size),
         writer: Mutex::new(None),
         io: Mutex::new(None),
         connected: AtomicBool::new(false),
@@ -655,8 +654,7 @@ pub fn open_ssh_session(
         &sessions,
         id,
         Some(host),
-        cols,
-        rows,
+        (cols, rows),
         params,
         askpass_secret,
     );
