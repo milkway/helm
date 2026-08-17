@@ -4,6 +4,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import {
+  type AttentionPayload,
   base64ToBytes,
   closeSession,
   detachSession,
@@ -12,6 +13,8 @@ import {
   onSessionStatus,
   openSshSession,
   resizePty,
+  type SessionOutput,
+  type SessionStatusPayload,
   writeStdin,
 } from "./ipc";
 import { useSessionsStore } from "../stores/sessions";
@@ -55,11 +58,53 @@ export interface TermEntry {
 }
 
 const entries = new Map<string, TermEntry>();
+const lastPtySizes = new WeakMap<TermEntry, { cols: number; rows: number }>();
 const pending = new Map<string, Promise<TermEntry>>();
 /** sinal de cancelamento p/ connects em voo (aba fechada durante o connect) */
 const pendingAbort = new Map<string, { aborted: boolean }>();
 /** holder DOM corrente de cada sessão (setado pelo TermHost montado) */
 const holders = new Map<string, { el: HTMLElement; fontSize: number }>();
+
+type SessionHandler<T> = (payload: T) => void;
+
+const outputHandlers = new Map<string, SessionHandler<SessionOutput>>();
+const statusHandlers = new Map<string, SessionHandler<SessionStatusPayload>>();
+const attentionHandlers = new Map<string, SessionHandler<AttentionPayload>>();
+let sessionListenersReady: Promise<void> | null = null;
+
+/** Instala uma única vez os listeners globais e roteia cada evento pelo PTY. */
+function ensureSessionListeners(): Promise<void> {
+  sessionListenersReady ??= (async () => {
+    const unlisteners: Array<() => void> = [];
+    try {
+      unlisteners.push(
+        await onSessionOutput((payload) => outputHandlers.get(payload.id)?.(payload)),
+      );
+      unlisteners.push(
+        await onSessionStatus((payload) => statusHandlers.get(payload.id)?.(payload)),
+      );
+      unlisteners.push(
+        await onAttention((payload) => attentionHandlers.get(payload.id)?.(payload)),
+      );
+    } catch (error) {
+      for (const unlisten of unlisteners.reverse()) unlisten();
+      sessionListenersReady = null;
+      throw error;
+    }
+  })();
+  return sessionListenersReady;
+}
+
+function addSessionHandler<T>(
+  handlers: Map<string, SessionHandler<T>>,
+  ptyId: string,
+  handler: SessionHandler<T>,
+): () => void {
+  handlers.set(ptyId, handler);
+  return () => {
+    if (handlers.get(ptyId) === handler) handlers.delete(ptyId);
+  };
+}
 
 /** Anexa o container da sessão ao holder corrente e ajusta a geometria. */
 function attach(entry: TermEntry): void {
@@ -172,48 +217,67 @@ async function createEntry(
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.open(container);
+  let webgl: WebglAddon | null = null;
   try {
-    term.loadAddon(new WebglAddon());
+    webgl = new WebglAddon();
+    webgl.onContextLoss(() => {
+      const lostAddon = webgl;
+      webgl = null;
+      lostAddon?.dispose();
+    });
+    term.loadAddon(webgl);
   } catch {
+    webgl?.dispose();
+    webgl = null;
     // WebGL indisponível — o renderer padrão do xterm assume.
   }
   fit.fit();
   disposers.push(() => term.dispose());
 
   // Listeners ANTES do spawn: os primeiros bytes chegam no arranque.
-  const offOutput = await onSessionOutput((payload) => {
-    if (payload.id === ptyId) term.write(base64ToBytes(payload.data));
-  });
-  disposers.push(offOutput);
+  try {
+    await ensureSessionListeners();
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+  disposers.push(
+    addSessionHandler(outputHandlers, ptyId, (payload) => {
+      term.write(base64ToBytes(payload.data));
+    }),
+  );
 
   let lastStatus: SessionStatus | null = null;
-  const offStatus = await onSessionStatus((payload) => {
-    if (payload.id !== ptyId) return;
-    const prev = lastStatus;
-    lastStatus = payload.status;
-    setStatus(uiId, payload.status, payload.attempt ?? null, payload.delaySecs ?? null);
+  disposers.push(
+    addSessionHandler(statusHandlers, ptyId, (payload) => {
+      const prev = lastStatus;
+      lastStatus = payload.status;
+      setStatus(uiId, payload.status, payload.attempt ?? null, payload.delaySecs ?? null);
 
-    if (payload.status === "connected" && (prev === "reconnecting" || prev === "error")) {
-      const host = useHostsStore.getState().hosts.find((h) => h.id === hostId);
-      const msg = host?.autoAttach
-        ? `reconnected · auto-attached tmux session "${tmuxSessionName(host.name)}"`
-        : "reconnected";
-      term.write(`\r\n\x1b[38;2;99;210;155m${msg}\x1b[0m\r\n`);
-    }
-    if (payload.status === "exited") {
-      term.write("\r\n\x1b[38;2;86;92;100m[sessão encerrada]\x1b[0m\r\n");
-    }
-  });
-  disposers.push(offStatus);
+      if (payload.status === "connected" && (prev === "reconnecting" || prev === "error")) {
+        const host = useHostsStore.getState().hosts.find((h) => h.id === hostId);
+        const msg = host?.autoAttach
+          ? `reconnected · auto-attached tmux session "${tmuxSessionName(host.name)}"`
+          : "reconnected";
+        term.write(`\r\n\x1b[38;2;99;210;155m${msg}\x1b[0m\r\n`);
+      }
+      if (payload.status === "exited") {
+        term.write("\r\n\x1b[38;2;86;92;100m[sessão encerrada]\x1b[0m\r\n");
+      }
+    }),
+  );
 
-  const offAttention = await onAttention((payload) => {
-    if (payload.id === ptyId) useSessionsStore.getState().setAttention(uiId, payload.active);
-  });
-  disposers.push(offAttention);
+  disposers.push(
+    addSessionHandler(attentionHandlers, ptyId, (payload) => {
+      useSessionsStore.getState().setAttention(uiId, payload.active);
+    }),
+  );
 
   const params = useSessionsStore.getState().sessions.find((s) => s.id === uiId)?.params;
+  const initialCols = term.cols || 80;
+  const initialRows = term.rows || 24;
   try {
-    await openSshSession(ptyId, hostId, term.cols || 80, term.rows || 24, params ?? undefined);
+    await openSshSession(ptyId, hostId, initialCols, initialRows, params ?? undefined);
   } catch (err) {
     // falha ao abrir (ex.: host sumiu do DB): libera listeners/terminal/DOM em
     // vez de vazá-los; status "error" mostra o overlay com retry (o terminal,
@@ -236,6 +300,7 @@ async function createEntry(
   disposers.push(() => offData.dispose());
 
   const entry: TermEntry = { uiId, hostId, ptyId, container, term, fit, disposers };
+  lastPtySizes.set(entry, { cols: initialCols, rows: initialRows });
   entries.set(uiId, entry);
   // o holder pode ter mudado durante o connect — reanexa e ressincroniza
   attach(entry);
@@ -248,7 +313,11 @@ export function fitEntry(uiId: string): void {
   if (!entry) return;
   if (entry.container.offsetWidth === 0 || entry.container.offsetHeight === 0) return;
   entry.fit.fit();
-  void resizePty(entry.ptyId, entry.term.cols, entry.term.rows);
+  const { cols, rows } = entry.term;
+  const lastPtySize = lastPtySizes.get(entry);
+  if (lastPtySize && cols === lastPtySize.cols && rows === lastPtySize.rows) return;
+  lastPtySizes.set(entry, { cols, rows });
+  void resizePty(entry.ptyId, cols, rows);
 }
 
 /** Fecha a sessão por completo: PTY, terminal e aba. */
