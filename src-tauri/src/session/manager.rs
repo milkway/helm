@@ -21,7 +21,8 @@ use crate::session::pty;
 const MAX_ATTEMPTS: u32 = 5;
 const ERROR_RETRY_SECS: u64 = 60;
 /// viveu menos que isto com output = tentativa falhada, não conexão real
-const MIN_STABLE_SECS: u64 = 5;
+const MIN_STABLE_SECS: u64 = 30;
+const EXIT_STATUS_WAIT: Duration = Duration::from_secs(1);
 
 pub struct Session {
     #[allow(dead_code)] // usado nas fases de latência
@@ -65,6 +66,8 @@ struct StatusPayload<'a> {
     attempt: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     delay_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<u32>,
 }
 
 #[derive(Clone, Serialize)]
@@ -146,6 +149,17 @@ fn looks_like_prompt(tail: &str) -> bool {
 }
 
 fn emit_status(app: &AppHandle, id: &str, status: &str, attempt: Option<u32>, delay: Option<u64>) {
+    emit_status_with_exit_code(app, id, status, attempt, delay, None);
+}
+
+fn emit_status_with_exit_code(
+    app: &AppHandle,
+    id: &str,
+    status: &str,
+    attempt: Option<u32>,
+    delay: Option<u64>,
+    exit_code: Option<u32>,
+) {
     let _ = app.emit(
         "session-status",
         StatusPayload {
@@ -153,8 +167,24 @@ fn emit_status(app: &AppHandle, id: &str, status: &str, attempt: Option<u32>, de
             status,
             attempt,
             delay_secs: delay,
+            exit_code,
         },
     );
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExitKind {
+    Clean,
+    Failure,
+    Unknown,
+}
+
+fn classify_exit_code(exit_code: Option<u32>) -> ExitKind {
+    match exit_code {
+        Some(0) => ExitKind::Clean,
+        Some(_) => ExitKind::Failure,
+        None => ExitKind::Unknown,
+    }
 }
 
 /// Nome de sessão tmux derivado do nome do host (tmux não aceita ':' e '.').
@@ -227,6 +257,12 @@ fn build_command(host: Option<&Host>, params: Option<&SessionParams>) -> Result<
             }
             let mut cmd = CommandBuilder::new("ssh");
             cmd.arg("-tt");
+            cmd.arg("-o");
+            cmd.arg("ConnectTimeout=10");
+            cmd.arg("-o");
+            cmd.arg("ServerAliveInterval=15");
+            cmd.arg("-o");
+            cmd.arg("ServerAliveCountMax=3");
             if let Some(port) = host.port {
                 cmd.arg("-p");
                 cmd.arg(port.to_string());
@@ -331,10 +367,10 @@ fn manager_loop(
         };
 
         let spawn_result = pty::spawn(cmd, cols, rows);
-        let (lived, got_output) = match spawn_result {
+        let (lived, got_output, exit_status) = match spawn_result {
             Err(e) => {
                 eprintln!("[session {id}] spawn falhou: {e}");
-                (Duration::ZERO, false)
+                (Duration::ZERO, false, None)
             }
             Ok(mut handles) => {
                 *session.io.lock().unwrap() = Some(Io {
@@ -385,21 +421,52 @@ fn manager_loop(
                 session.connected.store(false, Ordering::Relaxed);
                 set_attention(&app, &session, &id, false, None);
                 *session.io.lock().unwrap() = None;
-                (started.elapsed(), got_output)
+                let exit_status = match handles.exit_status.recv_timeout(EXIT_STATUS_WAIT) {
+                    Ok(Ok(status)) => Some(status),
+                    Ok(Err(e)) => {
+                        eprintln!("[session {id}] falha ao obter status do processo: {e}");
+                        None
+                    }
+                    Err(e) => {
+                        eprintln!("[session {id}] status do processo indisponível após EOF: {e}");
+                        None
+                    }
+                };
+                (started.elapsed(), got_output, exit_status)
             }
         };
 
+        let exit_code = exit_status.as_ref().map(|status| status.exit_code());
+        if let Some(status) = &exit_status {
+            if let Some(signal) = status.signal() {
+                eprintln!(
+                    "[session {id}] EOF — processo encerrou com código {} ({signal})",
+                    status.exit_code()
+                );
+            } else {
+                eprintln!(
+                    "[session {id}] EOF — processo encerrou com código {}",
+                    status.exit_code()
+                );
+            }
+        }
+
         if session.closed.load(Ordering::Relaxed) {
-            emit_status(&app, &id, "exited", None, None);
+            emit_status_with_exit_code(&app, &id, "exited", None, None, exit_code);
             break;
         }
         if session.detached.load(Ordering::Relaxed) {
             eprintln!("[session {id}] detach — tmux preservado no servidor");
-            emit_status(&app, &id, "detached", None, None);
+            emit_status_with_exit_code(&app, &id, "detached", None, None, exit_code);
+            break;
+        }
+        if classify_exit_code(exit_code) == ExitKind::Clean {
+            eprintln!("[session {id}] fechamento normal — reconexão não necessária");
+            emit_status_with_exit_code(&app, &id, "exited", None, None, exit_code);
             break;
         }
         if !auto_reconnect {
-            emit_status(&app, &id, "exited", None, None);
+            emit_status_with_exit_code(&app, &id, "exited", None, None, exit_code);
             break;
         }
 
@@ -411,7 +478,14 @@ fn manager_loop(
 
         if attempt > MAX_ATTEMPTS {
             eprintln!("[session {id}] {MAX_ATTEMPTS} tentativas falharam — retry em {ERROR_RETRY_SECS}s");
-            emit_status(&app, &id, "error", Some(MAX_ATTEMPTS), Some(ERROR_RETRY_SECS));
+            emit_status_with_exit_code(
+                &app,
+                &id,
+                "error",
+                Some(MAX_ATTEMPTS),
+                Some(ERROR_RETRY_SECS),
+                exit_code,
+            );
             interruptible_sleep(&session, ERROR_RETRY_SECS);
             if session.closed.load(Ordering::Relaxed) {
                 break;
@@ -421,8 +495,21 @@ fn manager_loop(
         }
 
         let delay = (1u64 << (attempt - 1)).min(30);
-        eprintln!("[session {id}] reconectando — tentativa {attempt}/{MAX_ATTEMPTS} em {delay}s");
-        emit_status(&app, &id, "reconnecting", Some(attempt), Some(delay));
+        if let Some(code) = exit_code {
+            eprintln!(
+                "[session {id}] reconectando após código {code} — tentativa {attempt}/{MAX_ATTEMPTS} em {delay}s"
+            );
+        } else {
+            eprintln!("[session {id}] reconectando — tentativa {attempt}/{MAX_ATTEMPTS} em {delay}s");
+        }
+        emit_status_with_exit_code(
+            &app,
+            &id,
+            "reconnecting",
+            Some(attempt),
+            Some(delay),
+            exit_code,
+        );
         interruptible_sleep(&session, delay);
     }
 
@@ -599,9 +686,18 @@ pub fn detach_session(sessions: State<'_, Sessions>, id: String) -> Result<(), S
     let session = get(&sessions, &id)?;
     session.detached.store(true, Ordering::Relaxed);
     let mut io = session.io.lock().unwrap();
-    let io = io.as_mut().ok_or("sessão sem PTY ativo")?;
-    io.writer.write_all(b"\x02d").map_err(|e| e.to_string())?;
-    io.writer.flush().map_err(|e| e.to_string())
+    let result = match io.as_mut() {
+        Some(io) => io
+            .writer
+            .write_all(b"\x02d")
+            .and_then(|_| io.writer.flush())
+            .map_err(|e| e.to_string()),
+        None => Err("sessão sem PTY ativo".to_string()),
+    };
+    if result.is_err() {
+        session.detached.store(false, Ordering::Relaxed);
+    }
+    result
 }
 
 /// Interrompe a espera do ciclo de erro e tenta reconectar já.
@@ -624,7 +720,7 @@ fn get(sessions: &State<'_, Sessions>, id: &str) -> Result<Arc<Session>, String>
 
 #[cfg(test)]
 mod tests {
-    use super::{looks_like_prompt, strip_ansi};
+    use super::{classify_exit_code, looks_like_prompt, strip_ansi, ExitKind};
 
     #[test]
     fn strip_ansi_preserva_multibyte() {
@@ -646,5 +742,12 @@ mod tests {
         assert!(looks_like_prompt("\x1b[32m❯\x1b[0m"));
         assert!(looks_like_prompt("Overwrite? "));
         assert!(!looks_like_prompt("user@host:~$ "));
+    }
+
+    #[test]
+    fn classifica_exit_code_para_reconexao() {
+        assert_eq!(classify_exit_code(Some(0)), ExitKind::Clean);
+        assert_eq!(classify_exit_code(Some(255)), ExitKind::Failure);
+        assert_eq!(classify_exit_code(None), ExitKind::Unknown);
     }
 }

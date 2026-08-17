@@ -144,6 +144,7 @@ export interface SessionStatusPayload {
   status: SessionStatus;
   attempt?: number;
   delaySecs?: number;
+  exitCode?: number;
 }
 
 export function onSessionStatus(
