@@ -43,6 +43,7 @@ pub struct Session {
     connected: AtomicBool,
     attention: AtomicBool,
     sudo_prompt: AtomicBool,
+    sudo_dismissed: AtomicBool,
     sudo_credential_id: Option<String>,
     output_tail: Mutex<String>,
     last_output: Mutex<Instant>,
@@ -103,6 +104,7 @@ struct AttentionPayload<'a> {
 struct SudoPromptPayload<'a> {
     id: &'a str,
     active: bool,
+    context: String,
 }
 
 fn set_attention(app: &AppHandle, session: &Session, id: &str, active: bool, reason: Option<&str>) {
@@ -112,11 +114,29 @@ fn set_attention(app: &AppHandle, session: &Session, id: &str, active: bool, rea
     }
 }
 
-fn set_sudo_prompt(app: &AppHandle, session: &Session, id: &str, active: bool) {
+fn set_sudo_prompt(
+    app: &AppHandle,
+    session: &Session,
+    id: &str,
+    active: bool,
+    context: &str,
+) {
     let active = active && session.sudo_credential_id.is_some();
     let was = session.sudo_prompt.swap(active, Ordering::Relaxed);
     if was != active {
-        let _ = app.emit("sudo-prompt", SudoPromptPayload { id, active });
+        let context = if active {
+            context.to_string()
+        } else {
+            String::new()
+        };
+        let _ = app.emit(
+            "sudo-prompt",
+            SudoPromptPayload {
+                id,
+                active,
+                context,
+            },
+        );
     }
 }
 
@@ -196,6 +216,27 @@ fn is_active_sudo_prompt(tail: &str) -> bool {
     last.strip_prefix("[sudo] password for ")
         .and_then(|rest| rest.strip_suffix(':'))
         .is_some_and(|user| !user.is_empty())
+}
+
+/// Contexto curto e sem escapes para o usuário conferir de onde veio o
+/// prompt. Mantém o fim para nunca cortar justamente a linha do sudo.
+fn sudo_prompt_context(tail: &str) -> String {
+    const MAX_CONTEXT_CHARS: usize = 200;
+
+    let clean = strip_ansi(tail);
+    let lines: Vec<&str> = clean
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let context = lines[lines.len().saturating_sub(3)..].join("\n");
+    let char_count = context.chars().count();
+    if char_count <= MAX_CONTEXT_CHARS {
+        context
+    } else {
+        let keep = MAX_CONTEXT_CHARS - 1;
+        format!("…{}", context.chars().skip(char_count - keep).collect::<String>())
+    }
 }
 
 fn emit_status(app: &AppHandle, id: &str, status: &str, attempt: Option<u32>, delay: Option<u64>) {
@@ -602,7 +643,7 @@ fn manager_loop(
                                 emit_status(&app, &id, "connected", None, None);
                             }
                             // rastreia a cauda do output para a heurística de atenção
-                            let sudo_active = {
+                            {
                                 let mut tail = session.output_tail.lock().unwrap();
                                 tail.push_str(&String::from_utf8_lossy(&buf[..n]));
                                 let len = tail.len();
@@ -615,9 +656,19 @@ fn manager_loop(
                                     }
                                     *tail = tail[cut..].to_string();
                                 }
-                                is_active_sudo_prompt(&tail)
-                            };
-                            set_sudo_prompt(&app, &session, &id, sudo_active);
+                                let sudo_active = is_active_sudo_prompt(&tail);
+                                if !sudo_active {
+                                    session.sudo_dismissed.store(false, Ordering::Relaxed);
+                                }
+                                let visible = sudo_active
+                                    && !session.sudo_dismissed.load(Ordering::Relaxed);
+                                let context = if visible {
+                                    sudo_prompt_context(&tail)
+                                } else {
+                                    String::new()
+                                };
+                                set_sudo_prompt(&app, &session, &id, visible, &context);
+                            }
                             *session.last_output.lock().unwrap() = Instant::now();
                             // novo output = atividade → limpa atenção
                             set_attention(&app, &session, &id, false, None);
@@ -633,7 +684,11 @@ fn manager_loop(
                 }
                 session.connected.store(false, Ordering::Relaxed);
                 set_attention(&app, &session, &id, false, None);
-                set_sudo_prompt(&app, &session, &id, false);
+                {
+                    let _tail = session.output_tail.lock().unwrap();
+                    session.sudo_dismissed.store(false, Ordering::Relaxed);
+                    set_sudo_prompt(&app, &session, &id, false, "");
+                }
                 *session.io.lock().unwrap() = None;
                 *session.writer.lock().unwrap() = None;
                 let exit_status = match handles.exit_status.recv_timeout(EXIT_STATUS_WAIT) {
@@ -783,6 +838,7 @@ fn start_session(
         connected: AtomicBool::new(false),
         attention: AtomicBool::new(false),
         sudo_prompt: AtomicBool::new(false),
+        sudo_dismissed: AtomicBool::new(false),
         sudo_credential_id: auth.sudo_credential_id,
         output_tail: Mutex::new(String::new()),
         last_output: Mutex::new(Instant::now()),
@@ -897,8 +953,8 @@ pub fn authorize_sudo(
     // Mantém a cauda estável entre a revalidação e a injeção. Assim, output
     // concorrente não pode transformar o clique em autorização de um prompt
     // já obsoleto.
-    let tail = session.output_tail.lock().unwrap();
-    if !is_active_sudo_prompt(&tail) {
+    let mut tail = session.output_tail.lock().unwrap();
+    if !session.sudo_prompt.load(Ordering::Relaxed) || !is_active_sudo_prompt(&tail) {
         return Err("o prompt de sudo não está mais ativo".into());
     }
     let mut writer = session.writer.lock().unwrap();
@@ -906,11 +962,28 @@ pub fn authorize_sudo(
     writer.write_all(secret.as_bytes()).map_err(|e| e.to_string())?;
     writer.write_all(b"\n").map_err(|e| e.to_string())?;
     writer.flush().map_err(|e| e.to_string())?;
+    tail.clear();
+    session.sudo_dismissed.store(false, Ordering::Relaxed);
+    set_sudo_prompt(&app, &session, &id, false, "");
     drop(tail);
 
     *session.last_input.lock().unwrap() = Instant::now();
     set_attention(&app, &session, &id, false, None);
-    set_sudo_prompt(&app, &session, &id, false);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn dismiss_sudo_prompt(
+    app: AppHandle,
+    sessions: State<'_, Sessions>,
+    id: String,
+) -> Result<(), String> {
+    let session = get(&sessions, &id)?;
+    let tail = session.output_tail.lock().unwrap();
+    session
+        .sudo_dismissed
+        .store(is_active_sudo_prompt(&tail), Ordering::Relaxed);
+    set_sudo_prompt(&app, &session, &id, false, "");
     Ok(())
 }
 
@@ -1107,7 +1180,7 @@ fn get(sessions: &State<'_, Sessions>, id: &str) -> Result<Arc<Session>, String>
 mod tests {
     use super::{
         agent_binary, classify_exit_status, is_active_sudo_prompt, looks_like_prompt, strip_ansi,
-        ExitKind,
+        sudo_prompt_context, ExitKind,
     };
     use portable_pty::ExitStatus;
 
@@ -1153,6 +1226,25 @@ mod tests {
         ));
         assert!(!is_active_sudo_prompt("Password:"));
         assert!(!is_active_sudo_prompt(" [sudo] password for deploy:"));
+    }
+
+    #[test]
+    fn prompt_sudo_consumido_nao_casa_novamente() {
+        let mut tail = String::from("sudo systemctl restart api\n[sudo] password for deploy:");
+        assert!(is_active_sudo_prompt(&tail));
+        tail.clear();
+        assert!(!is_active_sudo_prompt(&tail));
+        tail.push_str("\r\n");
+        assert!(!is_active_sudo_prompt(&tail));
+    }
+
+    #[test]
+    fn contexto_sudo_usa_as_tres_ultimas_linhas_limpas() {
+        let tail = "ignorada\n\x1b[32msudo systemctl restart api\x1b[0m\n\nfalha anterior\n[sudo] password for deploy:";
+        assert_eq!(
+            sudo_prompt_context(tail),
+            "sudo systemctl restart api\nfalha anterior\n[sudo] password for deploy:"
+        );
     }
 
     #[test]

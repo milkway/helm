@@ -51,6 +51,8 @@ export interface SessionInfo {
   attention: boolean;
   /** sudo aguarda autorização explícita para usar a credencial do cofre */
   sudoPrompt: boolean;
+  /** últimas linhas sem ANSI que contextualizam o prompt detectado */
+  sudoContext: string;
 }
 
 export const STATUS_COLORS = {

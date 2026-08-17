@@ -67,6 +67,10 @@ export function authorizeSudo(id: string): Promise<void> {
   return invoke("authorize_sudo", { id });
 }
 
+export function dismissSudoPrompt(id: string): Promise<void> {
+  return invoke("dismiss_sudo_prompt", { id });
+}
+
 export function resizePty(id: string, cols: number, rows: number): Promise<void> {
   return invoke("resize_pty", { id, cols, rows });
 }
@@ -235,6 +239,7 @@ export function onAttention(handler: (payload: AttentionPayload) => void): Promi
 export interface SudoPromptPayload {
   id: string;
   active: boolean;
+  context: string;
 }
 
 export function onSudoPrompt(

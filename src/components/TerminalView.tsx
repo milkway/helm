@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { authorizeSudo, retrySession } from "../lib/ipc";
+import { authorizeSudo, dismissSudoPrompt, retrySession } from "../lib/ipc";
 import { reattachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
@@ -134,10 +134,15 @@ function SudoToast({ session }: { session: SessionInfo }) {
   const unlock = useVaultStore((s) => s.unlock);
   const setSudoPrompt = useSessionsStore((s) => s.setSudoPrompt);
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const authorize = async () => {
     if (!session.ptyId || busy) return;
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -155,14 +160,19 @@ function SudoToast({ session }: { session: SessionInfo }) {
     }
   };
 
+  const dismiss = () => {
+    setSudoPrompt(session.id, false);
+    if (session.ptyId) void dismissSudoPrompt(session.ptyId).catch(() => undefined);
+  };
+
   return (
     <div className="sudo-toast">
       <span className="sudo-toast__icon">#</span>
       <div className="sudo-toast__body">
         <div className="sudo-toast__title">{t("sudo.title")}</div>
-        <div className={`sudo-toast__sub${error ? " sudo-toast__sub--error" : ""}`}>
-          {error ?? t("sudo.sub")}
-        </div>
+        <div className="sudo-toast__sub">{t("sudo.warning")}</div>
+        {error && <div className="sudo-toast__sub sudo-toast__sub--error">{error}</div>}
+        <div className="sudo-toast__context">{session.sudoContext}</div>
       </div>
       <button
         type="button"
@@ -170,13 +180,17 @@ function SudoToast({ session }: { session: SessionInfo }) {
         disabled={busy}
         onClick={() => void authorize()}
       >
-        {busy ? t("sudo.authorizing") : t("sudo.authorize")}
+        {busy
+          ? t("sudo.authorizing")
+          : confirming
+            ? t("sudo.confirm")
+            : t("sudo.authorize")}
       </button>
       <button
         type="button"
         className="sudo-toast__close"
         aria-label={t("sudo.dismiss")}
-        onClick={() => setSudoPrompt(session.id, false)}
+        onClick={dismiss}
       >
         ×
       </button>

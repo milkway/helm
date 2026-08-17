@@ -28,6 +28,7 @@ pub fn run() {
             manager::open_ssh_session,
             manager::write_stdin,
             manager::authorize_sudo,
+            manager::dismiss_sudo_prompt,
             manager::resize_pty,
             manager::close_session,
             manager::detach_session,

@@ -43,7 +43,7 @@ interface SessionsState {
   setStatus: (id: string, status: SessionStatus, attempt?: number | null, delaySecs?: number | null) => void;
   setPtyId: (id: string, ptyId: string | null) => void;
   setAttention: (id: string, active: boolean) => void;
-  setSudoPrompt: (id: string, active: boolean) => void;
+  setSudoPrompt: (id: string, active: boolean, context?: string) => void;
   /** força remontagem do Term (re-attach após detach/erro terminal) */
   reattach: (id: string) => void;
 }
@@ -69,6 +69,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
           params: params ?? null,
           attention: false,
           sudoPrompt: false,
+          sudoContext: "",
         },
       ],
       activeId: id,
@@ -126,9 +127,13 @@ export const useSessionsStore = create<SessionsState>((set) => ({
       ),
     })),
 
-  setSudoPrompt: (id, active) =>
+  setSudoPrompt: (id, active, context = "") =>
     set((s) => ({
-      sessions: s.sessions.map((x) => (x.id === id ? { ...x, sudoPrompt: active } : x)),
+      sessions: s.sessions.map((x) =>
+        x.id === id
+          ? { ...x, sudoPrompt: active, sudoContext: active ? context : "" }
+          : x,
+      ),
     })),
 
   reattach: (id) =>
@@ -144,6 +149,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
               log: x.log,
               attention: false,
               sudoPrompt: false,
+              sudoContext: "",
             }
           : x,
       ),
