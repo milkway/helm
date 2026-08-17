@@ -5,6 +5,7 @@ import type { RemoteInfo } from "../lib/ipc";
 export type View = "term" | "grid";
 export type GridCols = 2 | 3 | 4;
 export type Theme = "dark" | "light";
+export type Agent = "claude" | "codex";
 
 export type Modal =
   | { kind: "addHost" }
@@ -29,6 +30,7 @@ interface UiState {
   sidebarHidden: boolean;
   inspectorHidden: boolean;
   theme: Theme;
+  defaultAgent: Agent;
   autoTmux: { hostId: string; phase: "detecting" | "unlocking" | "installing" } | null;
   setView: (view: View) => void;
   setGridCols: (cols: GridCols) => void;
@@ -40,6 +42,7 @@ interface UiState {
   toggleInspector: () => void;
   toggleTheme: () => void;
   setTheme: (theme: Theme) => void;
+  setDefaultAgent: (agent: Agent) => void;
   setAutoTmux: (state: UiState["autoTmux"]) => void;
   /** carrega preferências persistidas (ui_prefs no SQLite) */
   loadPrefs: () => Promise<void>;
@@ -62,6 +65,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarHidden: false,
   inspectorHidden: false,
   theme: "dark",
+  defaultAgent: "claude",
   autoTmux: null,
   openModal: (modal) => set({ modal, paletteOpen: false }),
   closeModal: () => set({ modal: null }),
@@ -84,6 +88,11 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ theme });
     applyTheme(theme);
     void invoke("set_pref", { key: "ui.theme", value: theme });
+  },
+
+  setDefaultAgent: (defaultAgent) => {
+    set({ defaultAgent });
+    void invoke("set_pref", { key: "ui.defaultAgent", value: defaultAgent });
   },
 
   toggleTheme: () => get().setTheme(get().theme === "dark" ? "light" : "dark"),
@@ -109,14 +118,16 @@ export const useUiStore = create<UiState>((set, get) => ({
   loadPrefs: async () => {
     const getPref = (key: string) =>
       invoke<string | null>("get_pref", { key }).catch(() => null);
-    const [view, cols, collapsed, savedSidebar, savedInspector, savedTheme] = await Promise.all([
-      getPref("view"),
-      getPref("gridCols"),
-      getPref("collapsedGroups"),
-      getPref("ui.sidebarHidden"),
-      getPref("ui.inspectorHidden"),
-      getPref("ui.theme"),
-    ]);
+    const [view, cols, collapsed, savedSidebar, savedInspector, savedTheme, savedAgent] =
+      await Promise.all([
+        getPref("view"),
+        getPref("gridCols"),
+        getPref("collapsedGroups"),
+        getPref("ui.sidebarHidden"),
+        getPref("ui.inspectorHidden"),
+        getPref("ui.theme"),
+        getPref("ui.defaultAgent"),
+      ]);
     let collapsedGroups: string[] = [];
     try {
       if (collapsed) collapsedGroups = JSON.parse(collapsed);
@@ -131,6 +142,7 @@ export const useUiStore = create<UiState>((set, get) => ({
       sidebarHidden: savedSidebar === "1",
       inspectorHidden: savedInspector === "1",
       theme,
+      defaultAgent: savedAgent === "codex" ? "codex" : "claude",
     });
     applyTheme(theme);
   },

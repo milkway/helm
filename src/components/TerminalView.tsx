@@ -1,9 +1,10 @@
-import { useState } from "react";
-import { retrySession } from "../lib/ipc";
+import { useEffect, useState } from "react";
+import { authorizeSudo, dismissSudoPrompt, retrySession } from "../lib/ipc";
 import { reattachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
+import { useVaultStore } from "../stores/vault";
 import { hostAddr, type Host, type SessionInfo } from "../types";
 import { useT } from "../i18n";
 import { TermHost } from "./TermHost";
@@ -128,6 +129,80 @@ function DetachedOverlay({ session, host }: { session: SessionInfo; host?: Host 
   );
 }
 
+function SudoToast({ session }: { session: SessionInfo }) {
+  const t = useT();
+  const unlock = useVaultStore((s) => s.unlock);
+  const setSudoPrompt = useSessionsStore((s) => s.setSudoPrompt);
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setConfirming(false);
+    setError(null);
+  }, [session.sudoContext]);
+
+  const authorize = async () => {
+    if (!session.ptyId || busy) return;
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      if (useVaultStore.getState().locked) await unlock();
+      if (useVaultStore.getState().locked) {
+        setError(t("sudo.unlockError"));
+        return;
+      }
+      await authorizeSudo(session.ptyId);
+      setSudoPrompt(session.id, false);
+    } catch {
+      setError(t("sudo.error"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dismiss = () => {
+    setSudoPrompt(session.id, false);
+    if (session.ptyId) void dismissSudoPrompt(session.ptyId).catch(() => undefined);
+  };
+
+  return (
+    <div className="sudo-toast">
+      <span className="sudo-toast__icon">#</span>
+      <div className="sudo-toast__body">
+        <div className="sudo-toast__title">{t("sudo.title")}</div>
+        <div className="sudo-toast__sub">{t("sudo.warning")}</div>
+        {error && <div className="sudo-toast__sub sudo-toast__sub--error">{error}</div>}
+        <div className="sudo-toast__context">{session.sudoContext}</div>
+      </div>
+      <button
+        type="button"
+        className="sudo-toast__authorize"
+        disabled={busy}
+        onClick={() => void authorize()}
+      >
+        {busy
+          ? t("sudo.authorizing")
+          : confirming
+            ? t("sudo.confirm")
+            : t("sudo.authorize")}
+      </button>
+      <button
+        type="button"
+        className="sudo-toast__close"
+        aria-label={t("sudo.dismiss")}
+        onClick={dismiss}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 // Uma pane por sessão aberta, todas montadas (o xterm mantém buffer e estado);
 // as inativas ficam com visibility:hidden para preservar as dimensões.
 export function TerminalView() {
@@ -172,6 +247,7 @@ export function TerminalView() {
             )}
             {session.status === "error" && <ErrorOverlay session={session} host={host} />}
             {session.status === "detached" && <DetachedOverlay session={session} host={host} />}
+            {session.id === activeId && session.sudoPrompt && <SudoToast session={session} />}
           </div>
         );
       })}
@@ -189,6 +265,7 @@ function AttentionToast() {
   const focus = useSessionsStore((s) => s.focus);
   const hosts = useHostsStore((s) => s.hosts);
 
+  if (sessions.some((s) => s.id === activeId && s.sudoPrompt)) return null;
   const target = sessions.find((s) => s.attention && s.id !== activeId);
   if (!target) return null;
   const host = hosts.find((h) => h.id === target.hostId);

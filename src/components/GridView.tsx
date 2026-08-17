@@ -66,7 +66,7 @@ function GridCard({ session, host, dense }: { session: SessionInfo; host?: Host;
   };
 
   return (
-    <div className={`grid-card${session.status === "error" ? " grid-card--attention" : ""}`}>
+    <div className={`grid-card${session.status === "error" || session.sudoPrompt ? " grid-card--attention" : ""}`}>
       <div className="grid-card__header" onClick={openInTerm} title={t("grid.openTerm")}>
         <span
           className={`grid-card__dot${session.status === "connecting" || session.status === "reconnecting" ? " host-row__dot--spin" : ""}`}
@@ -76,7 +76,9 @@ function GridCard({ session, host, dense }: { session: SessionInfo; host?: Host;
           <div className="grid-card__name">{name}</div>
           {!dense && <div className="grid-card__addr">{addr}</div>}
         </div>
-        {!dense && (
+        {session.sudoPrompt ? (
+          <span className="grid-card__tag grid-card__tag--sudo">{t("sudo.gridBadge")}</span>
+        ) : !dense && (
           <span className="grid-card__tag" style={{ color: tag.color, background: tag.bg }}>
             {tag.label}
           </span>

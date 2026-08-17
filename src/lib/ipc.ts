@@ -7,6 +7,7 @@ export interface SessionParams {
   mode: "shell" | "tmux" | "clmux";
   sessionName?: string;
   projectDir?: string;
+  agent?: "claude" | "codex";
 }
 
 export function openSshSession(
@@ -38,26 +39,54 @@ export interface RemoteInfo {
   os: string | null;
   pkgManager: string | null;
   tmux: string | null;
+  claude: string | null;
+  codex: string | null;
 }
+
+const REMOTE_INFO_TTL_MS = 10 * 60 * 1000;
+const remoteInfoCache = new Map<
+  string,
+  { expiresAt: number; promise: Promise<RemoteInfo> }
+>();
 
 export function detectRemote(hostId: string): Promise<RemoteInfo> {
-  return invoke("detect_remote", { hostId });
+  const now = Date.now();
+  const cached = remoteInfoCache.get(hostId);
+  if (cached && cached.expiresAt > now) return cached.promise;
+
+  const promise = invoke<RemoteInfo>("detect_remote", { hostId });
+  remoteInfoCache.set(hostId, { expiresAt: now + REMOTE_INFO_TTL_MS, promise });
+  return promise;
 }
 
-export function installTmux(
+function invalidateRemoteInfo(hostId: string): void {
+  remoteInfoCache.delete(hostId);
+}
+
+export async function installTmux(
   hostId: string,
   pkgManager: string,
   auth: { credentialId?: string; password?: string },
 ): Promise<string> {
-  return invoke("install_tmux", {
+  const version = await invoke<string>("install_tmux", {
     hostId,
     pkgManager,
     auth: { credentialId: auth.credentialId ?? null, password: auth.password ?? null },
   });
+  invalidateRemoteInfo(hostId);
+  return version;
 }
 
 export function writeStdin(id: string, data: string): Promise<void> {
   return invoke("write_stdin", { id, data });
+}
+
+export function authorizeSudo(id: string): Promise<void> {
+  return invoke("authorize_sudo", { id });
+}
+
+export function dismissSudoPrompt(id: string): Promise<void> {
+  return invoke("dismiss_sudo_prompt", { id });
 }
 
 export function resizePty(id: string, cols: number, rows: number): Promise<void> {
@@ -72,12 +101,14 @@ export function listHosts(): Promise<Host[]> {
   return invoke("list_hosts");
 }
 
-export function saveHost(host: Host): Promise<void> {
-  return invoke("save_host", { host });
+export async function saveHost(host: Host): Promise<void> {
+  await invoke("save_host", { host });
+  invalidateRemoteInfo(host.id);
 }
 
-export function deleteHost(id: string): Promise<void> {
-  return invoke("delete_host", { id });
+export async function deleteHost(id: string): Promise<void> {
+  await invoke("delete_host", { id });
+  invalidateRemoteInfo(id);
 }
 
 export function hostHasSshCredential(hostId: string): Promise<boolean> {
@@ -223,6 +254,18 @@ export interface AttentionPayload {
 
 export function onAttention(handler: (payload: AttentionPayload) => void): Promise<UnlistenFn> {
   return listen<AttentionPayload>("attention", (event) => handler(event.payload));
+}
+
+export interface SudoPromptPayload {
+  id: string;
+  active: boolean;
+  context: string;
+}
+
+export function onSudoPrompt(
+  handler: (payload: SudoPromptPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<SudoPromptPayload>("sudo-prompt", (event) => handler(event.payload));
 }
 
 export function detachSession(id: string): Promise<void> {

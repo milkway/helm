@@ -43,6 +43,7 @@ export function CommandPalette() {
   const open = useUiStore((s) => s.paletteOpen);
   const togglePalette = useUiStore((s) => s.togglePalette);
   const openModal = useUiStore((s) => s.openModal);
+  const defaultAgent = useUiStore((s) => s.defaultAgent);
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
   const focus = useSessionsStore((s) => s.focus);
@@ -88,7 +89,10 @@ export function CommandPalette() {
       list.push({
         key: "cmd-clmux",
         section: t("pal.commands"),
-        label: t("pal.clmux", { host: activeHost.name }),
+        label: t("pal.clmux", {
+          host: activeHost.name,
+          agent: defaultAgent === "codex" ? t("ns.codex") : t("ns.claude"),
+        }),
         hint: "⌘⏎",
         icon: "cl",
         run: () => {
@@ -96,6 +100,7 @@ export function CommandPalette() {
             mode: "clmux",
             sessionName: tmuxSessionName(activeHost.name),
             projectDir: activeHost.projectDir ?? undefined,
+            agent: defaultAgent,
           });
           togglePalette(false);
         },
@@ -163,7 +168,7 @@ export function CommandPalette() {
       run: () => openModal({ kind: "about" }),
     });
     return list;
-  }, [t, sessions, hosts, activeHost, activeSession, focus, openSession, openModal, togglePalette, loadHosts, toggleVpnPanel]);
+  }, [t, sessions, hosts, activeHost, activeSession, defaultAgent, focus, openSession, openModal, togglePalette, loadHosts, toggleVpnPanel]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
