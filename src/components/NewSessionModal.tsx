@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { detectRemote, type RemoteInfo } from "../lib/ipc";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
@@ -6,6 +7,7 @@ import { statusColor, tmuxSessionName } from "../types";
 import { useT } from "../i18n";
 
 type Mode = "shell" | "tmux" | "clmux";
+type Agent = "claude" | "codex";
 
 /** Nova sessão (projeto) — design 1c. */
 export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
@@ -19,6 +21,22 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
   const [project, setProject] = useState("");
   const [dir, setDir] = useState("");
   const [mode, setMode] = useState<Mode>("clmux");
+  const [agent, setAgent] = useState<Agent>("claude");
+  const [remoteInfo, setRemoteInfo] = useState<RemoteInfo | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRemoteInfo(null);
+    if (!hostId) {
+      return () => { cancelled = true; };
+    }
+    void detectRemote(hostId)
+      .then((info) => {
+        if (!cancelled) setRemoteInfo(info);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [hostId]);
 
   const host = hosts.find((h) => h.id === hostId);
   const hostSession = sessions.find((s) => s.hostId === hostId);
@@ -32,11 +50,11 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
       {
         id: "clmux" as Mode,
         title: t("ns.clmux"),
-        sub: `cd ${dir.trim() || "~"} · tmux · claude`,
+        sub: `cd ${dir.trim() || "~"} · tmux · ${agent}`,
         badge: t("ns.default"),
       },
     ],
-    [t, sessionName, dir],
+    [t, sessionName, dir, agent],
   );
 
   const submit = () => {
@@ -45,6 +63,7 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
       mode,
       sessionName: mode === "shell" ? undefined : sessionName,
       projectDir: dir.trim() || undefined,
+      agent: mode === "clmux" ? agent : undefined,
     });
     closeModal();
   };
@@ -121,6 +140,31 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
                       <div className="hxm__radio-title">{m.title}</div>
                       <div className="hxm__radio-sub">{m.sub}</div>
                     </div>
+                    {m.id === "clmux" && (
+                      <div
+                        className="hxm__agent"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMode("clmux");
+                        }}
+                      >
+                        <select
+                          className="hxm__agent-select"
+                          value={agent}
+                          aria-label={t("ns.agent")}
+                          onChange={(e) => {
+                            setAgent(e.target.value as Agent);
+                            setMode("clmux");
+                          }}
+                        >
+                          <option value="claude">{t("ns.claude")}</option>
+                          <option value="codex">{t("ns.codex")}</option>
+                        </select>
+                        {remoteInfo && !remoteInfo[agent] && (
+                          <span className="hxm__agent-missing">{t("ns.notDetected")}</span>
+                        )}
+                      </div>
+                    )}
                     {m.badge && <span className="hxm__badge hxm__badge--amber">{m.badge}</span>}
                   </div>
                 );

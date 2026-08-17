@@ -734,6 +734,66 @@
   cursor: pointer;
 }
 
+.sudo-toast {
+  position: absolute;
+  right: 20px;
+  bottom: 16px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(620px, calc(100% - 40px));
+  padding: 10px 11px 10px 13px;
+  background: var(--bg-attention-float);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(var(--accent-rgb), 0.42);
+  border-radius: 11px;
+  box-shadow: 0 12px 40px var(--shadow-soft);
+  animation: helm-fade 0.3s ease;
+  font-family: var(--font-ui);
+}
+.sudo-toast__icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--accent-hover);
+  background: rgba(var(--accent-rgb), 0.16);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.sudo-toast__body { min-width: 0; flex: 1; }
+.sudo-toast__title { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+.sudo-toast__sub { font-size: 11px; color: var(--text-muted); }
+.sudo-toast__sub--error { color: var(--st-attention-text); }
+.sudo-toast__authorize {
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 10px;
+  flex: none;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: 600 11.5px var(--font-ui);
+  cursor: pointer;
+}
+.sudo-toast__authorize:disabled { opacity: 0.6; cursor: default; }
+.sudo-toast__close {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: 17px/1 var(--font-ui);
+  cursor: pointer;
+}
+.grid-card__tag--sudo {
+  color: var(--accent-hover);
+  background: rgba(var(--accent-rgb), 0.16);
+}
+
 /* Status bar */
 .statusbar {
   height: 30px;
@@ -1498,6 +1558,23 @@
 .hxm__radio-title { font-size: 13px; font-weight: 500; color: var(--text-2); }
 .hxm__radio--on .hxm__radio-title { font-weight: 600; color: var(--accent-hover); }
 .hxm__radio-sub { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+.hxm__agent { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.hxm__agent-select {
+  max-width: 112px;
+  padding: 4px 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-3);
+  border-radius: 6px;
+  outline: none;
+  color: var(--text-2);
+  font: 11px var(--font-ui);
+  cursor: pointer;
+}
+.hxm__agent-missing {
+  color: var(--st-attention-text);
+  font: 9.5px var(--font-mono);
+  white-space: nowrap;
+}
 .hxm__host-pick {
   display: flex;
   align-items: center;

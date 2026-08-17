@@ -5,6 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import {
   type AttentionPayload,
+  type SudoPromptPayload,
   base64ToBytes,
   closeSession,
   detectRemote,
@@ -12,6 +13,7 @@ import {
   hostHasSshCredential,
   installTmux,
   onAttention,
+  onSudoPrompt,
   onSessionOutput,
   onSessionStatus,
   openSshSession,
@@ -110,6 +112,7 @@ type SessionHandler<T> = (payload: T) => void;
 const outputHandlers = new Map<string, SessionHandler<SessionOutput>>();
 const statusHandlers = new Map<string, SessionHandler<SessionStatusPayload>>();
 const attentionHandlers = new Map<string, SessionHandler<AttentionPayload>>();
+const sudoPromptHandlers = new Map<string, SessionHandler<SudoPromptPayload>>();
 let sessionListenersReady: Promise<void> | null = null;
 
 /** Instala uma única vez os listeners globais e roteia cada evento pelo PTY. */
@@ -125,6 +128,9 @@ function ensureSessionListeners(): Promise<void> {
       );
       unlisteners.push(
         await onAttention((payload) => attentionHandlers.get(payload.id)?.(payload)),
+      );
+      unlisteners.push(
+        await onSudoPrompt((payload) => sudoPromptHandlers.get(payload.id)?.(payload)),
       );
     } catch (error) {
       for (const unlisten of unlisteners.reverse()) unlisten();
@@ -463,6 +469,12 @@ async function createEntry(
   disposers.push(
     addSessionHandler(attentionHandlers, ptyId, (payload) => {
       useSessionsStore.getState().setAttention(uiId, payload.active);
+    }),
+  );
+
+  disposers.push(
+    addSessionHandler(sudoPromptHandlers, ptyId, (payload) => {
+      useSessionsStore.getState().setSudoPrompt(uiId, payload.active);
     }),
   );
 

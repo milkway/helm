@@ -42,6 +42,8 @@ pub struct Session {
     // detecção de atenção (Fase 8)
     connected: AtomicBool,
     attention: AtomicBool,
+    sudo_prompt: AtomicBool,
+    sudo_credential_id: Option<String>,
     output_tail: Mutex<String>,
     last_output: Mutex<Instant>,
     last_input: Mutex<Instant>,
@@ -96,10 +98,25 @@ struct AttentionPayload<'a> {
     reason: Option<&'a str>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SudoPromptPayload<'a> {
+    id: &'a str,
+    active: bool,
+}
+
 fn set_attention(app: &AppHandle, session: &Session, id: &str, active: bool, reason: Option<&str>) {
     let was = session.attention.swap(active, Ordering::Relaxed);
     if was != active {
         let _ = app.emit("attention", AttentionPayload { id, active, reason });
+    }
+}
+
+fn set_sudo_prompt(app: &AppHandle, session: &Session, id: &str, active: bool) {
+    let active = active && session.sudo_credential_id.is_some();
+    let was = session.sudo_prompt.swap(active, Ordering::Relaxed);
+    if was != active {
+        let _ = app.emit("sudo-prompt", SudoPromptPayload { id, active });
     }
 }
 
@@ -160,9 +177,25 @@ fn looks_like_prompt(tail: &str) -> bool {
         "password:", "passphrase", "password for",
         "do you want", "are you sure", "proceed?", "continue?",
         "overwrite?", "confirm", "press enter", "❯",
+        "always allow", "allow once", "1. yes",
         "aguardando", "waiting for input",
     ];
     NEEDLES.iter().any(|n| low.contains(n))
+}
+
+/// Prompt ativo do sudo padrão. Só considera a última linha não-vazia da
+/// cauda, para não reativar um prompt antigo depois que o comando continuou.
+fn is_active_sudo_prompt(tail: &str) -> bool {
+    let clean = strip_ansi(tail);
+    let last = clean
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("")
+        .trim_end();
+    last.strip_prefix("[sudo] password for ")
+        .and_then(|rest| rest.strip_suffix(':'))
+        .is_some_and(|user| !user.is_empty())
 }
 
 fn emit_status(app: &AppHandle, id: &str, status: &str, attempt: Option<u32>, delay: Option<u64>) {
@@ -322,26 +355,45 @@ pub struct SessionParams {
     pub mode: String,
     pub session_name: Option<String>,
     pub project_dir: Option<String>,
+    pub agent: Option<String>,
+}
+
+fn agent_binary(agent: Option<&str>) -> Result<&'static str, String> {
+    match agent.unwrap_or("claude") {
+        "claude" => Ok("claude"),
+        "codex" => Ok("codex"),
+        value => Err(format!(
+            "agente de IA inválido: {value:?}; use apenas 'claude' ou 'codex'"
+        )),
+    }
 }
 
 /// Comando remoto conforme o modo. clmux: attach se a sessão existir; senão
-/// cria e digita `claude` nela (send-keys) — "abre o Claude dentro do tmux".
-fn remote_command(mode: &str, name: &str, dir: Option<&str>) -> Option<String> {
+/// cria e digita o agente permitido nela (send-keys).
+fn remote_command(
+    mode: &str,
+    name: &str,
+    dir: Option<&str>,
+    agent: Option<&str>,
+) -> Result<Option<String>, String> {
     let name_q = shell_quote(name);
     let cd = dir
         .filter(|d| !d.is_empty())
         .map(|d| format!("cd {} && ", shell_quote(d)))
         .unwrap_or_default();
-    match mode {
+    Ok(match mode {
         "tmux" => Some(format!("{cd}tmux new -As {name_q}")),
-        "clmux" => Some(format!(
-            "{cd}if tmux has-session -t {name_q} 2>/dev/null; then tmux attach -t {name_q}; \
-             else tmux new -s {name_q} \\; send-keys claude Enter; fi"
-        )),
+        "clmux" => {
+            let agent = agent_binary(agent)?;
+            Some(format!(
+                "{cd}if tmux has-session -t {name_q} 2>/dev/null; then tmux attach -t {name_q}; \
+                 else tmux new -s {name_q} \\; send-keys {agent} Enter; fi"
+            ))
+        }
         // shell na pasta do projeto: cd + shell de login interativo
         "shell" if !cd.is_empty() => Some(format!("{cd}exec \"${{SHELL:-bash}}\" -l")),
         _ => None,
-    }
+    })
 }
 
 fn build_command(
@@ -423,7 +475,8 @@ fn build_command(
                 .and_then(|p| p.project_dir.clone())
                 .or_else(|| host.project_dir.clone());
 
-            if let Some(remote) = remote_command(&mode, &name, dir.as_deref()) {
+            let agent = params.and_then(|p| p.agent.as_deref());
+            if let Some(remote) = remote_command(&mode, &name, dir.as_deref(), agent)? {
                 cmd.arg(remote);
             }
             cmd.env("TERM", "xterm-256color");
@@ -549,7 +602,7 @@ fn manager_loop(
                                 emit_status(&app, &id, "connected", None, None);
                             }
                             // rastreia a cauda do output para a heurística de atenção
-                            {
+                            let sudo_active = {
                                 let mut tail = session.output_tail.lock().unwrap();
                                 tail.push_str(&String::from_utf8_lossy(&buf[..n]));
                                 let len = tail.len();
@@ -562,7 +615,9 @@ fn manager_loop(
                                     }
                                     *tail = tail[cut..].to_string();
                                 }
-                            }
+                                is_active_sudo_prompt(&tail)
+                            };
+                            set_sudo_prompt(&app, &session, &id, sudo_active);
                             *session.last_output.lock().unwrap() = Instant::now();
                             // novo output = atividade → limpa atenção
                             set_attention(&app, &session, &id, false, None);
@@ -578,6 +633,7 @@ fn manager_loop(
                 }
                 session.connected.store(false, Ordering::Relaxed);
                 set_attention(&app, &session, &id, false, None);
+                set_sudo_prompt(&app, &session, &id, false);
                 *session.io.lock().unwrap() = None;
                 *session.writer.lock().unwrap() = None;
                 let exit_status = match handles.exit_status.recv_timeout(EXIT_STATUS_WAIT) {
@@ -706,6 +762,7 @@ fn start_session(
     size: (u16, u16),
     params: Option<SessionParams>,
     askpass_secret: Option<Zeroizing<String>>,
+    sudo_credential_id: Option<String>,
 ) {
     let session = Arc::new(Session {
         host_id: host.as_ref().map(|h| h.id.clone()),
@@ -719,6 +776,8 @@ fn start_session(
         io: Mutex::new(None),
         connected: AtomicBool::new(false),
         attention: AtomicBool::new(false),
+        sudo_prompt: AtomicBool::new(false),
+        sudo_credential_id,
         output_tail: Mutex::new(String::new()),
         last_output: Mutex::new(Instant::now()),
         last_input: Mutex::new(Instant::now()),
@@ -734,6 +793,22 @@ fn start_session(
         map.insert(id.clone(), session.clone());
     }
     std::thread::spawn(move || manager_loop(app, id, session, host, params));
+}
+
+fn resolve_sudo_credential(db: &State<'_, Db>, host: &Host) -> Option<String> {
+    let credential_id = host.credential_ref.as_deref()?;
+    let eligible = {
+        let conn = db.0.lock().unwrap();
+        db::has_sudo_password_credential(&conn, credential_id)
+    };
+    match eligible {
+        Ok(true) => Some(credential_id.to_string()),
+        Ok(false) => None,
+        Err(e) => {
+            eprintln!("[session] falha ao consultar credencial sudo ({e})");
+            None
+        }
+    }
 }
 
 fn resolve_ssh_password(
@@ -781,7 +856,11 @@ pub fn open_ssh_session(
     params: Option<SessionParams>,
 ) -> Result<(), String> {
     let host = db::get_host(&db, &host_id)?;
+    if params.as_ref().is_some_and(|params| params.mode == "clmux") {
+        agent_binary(params.as_ref().and_then(|params| params.agent.as_deref()))?;
+    }
     let askpass_secret = resolve_ssh_password(&db, &vault, &host);
+    let sudo_credential_id = resolve_sudo_credential(&db, &host);
     start_session(
         app,
         &sessions,
@@ -790,7 +869,46 @@ pub fn open_ssh_session(
         (cols, rows),
         params,
         askpass_secret,
+        sudo_credential_id,
     );
+    Ok(())
+}
+
+#[tauri::command]
+pub fn authorize_sudo(
+    app: AppHandle,
+    sessions: State<'_, Sessions>,
+    db: State<'_, Db>,
+    vault: State<'_, Vault>,
+    id: String,
+) -> Result<(), String> {
+    let session = get(&sessions, &id)?;
+    if !session.sudo_prompt.load(Ordering::Relaxed) {
+        return Err("a sessão não está aguardando uma senha de sudo".into());
+    }
+    let credential_id = session
+        .sudo_credential_id
+        .as_deref()
+        .ok_or("a sessão não tem credencial sudo elegível")?;
+
+    // Mantém a cauda estável entre a revalidação e a injeção. Assim, output
+    // concorrente não pode transformar o clique em autorização de um prompt
+    // já obsoleto.
+    let tail = session.output_tail.lock().unwrap();
+    if !is_active_sudo_prompt(&tail) {
+        return Err("o prompt de sudo não está mais ativo".into());
+    }
+    let secret = Zeroizing::new(vault::get_secret(&db, &vault, credential_id)?);
+    let mut writer = session.writer.lock().unwrap();
+    let writer = writer.as_mut().ok_or("sessão sem PTY ativo")?;
+    writer.write_all(secret.as_bytes()).map_err(|e| e.to_string())?;
+    writer.write_all(b"\n").map_err(|e| e.to_string())?;
+    writer.flush().map_err(|e| e.to_string())?;
+    drop(tail);
+
+    *session.last_input.lock().unwrap() = Instant::now();
+    set_attention(&app, &session, &id, false, None);
+    set_sudo_prompt(&app, &session, &id, false);
     Ok(())
 }
 
@@ -985,7 +1103,10 @@ fn get(sessions: &State<'_, Sessions>, id: &str) -> Result<Arc<Session>, String>
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_exit_status, looks_like_prompt, strip_ansi, ExitKind};
+    use super::{
+        agent_binary, classify_exit_status, is_active_sudo_prompt, looks_like_prompt, strip_ansi,
+        ExitKind,
+    };
     use portable_pty::ExitStatus;
 
     #[test]
@@ -1008,6 +1129,36 @@ mod tests {
         assert!(looks_like_prompt("\x1b[32m❯\x1b[0m"));
         assert!(looks_like_prompt("Overwrite? "));
         assert!(!looks_like_prompt("user@host:~$ "));
+    }
+
+    #[test]
+    fn reconhece_prompts_de_permissao_dos_agentes_sem_estados_transitorios() {
+        let claude = "Bash command\n  rm -rf build\n\n❯ 1. Yes\n  2. Yes, and don't ask again\n  3. No";
+        let codex = "Run this command?\n\n  1. Allow once\n  2. Always allow for this session\n  3. Cancel";
+
+        assert!(looks_like_prompt(claude));
+        assert!(looks_like_prompt(codex));
+        assert!(looks_like_prompt("Claude Code permission\n  1. Yes\n  2. No"));
+        assert!(!looks_like_prompt("Working (12s · esc to interrupt)"));
+    }
+
+    #[test]
+    fn reconhece_apenas_prompt_sudo_ativo_no_fim_da_cauda() {
+        assert!(is_active_sudo_prompt("[sudo] password for deploy:"));
+        assert!(is_active_sudo_prompt("output\n[sudo] password for deploy:   "));
+        assert!(!is_active_sudo_prompt(
+            "[sudo] password for deploy:\nserviço reiniciado"
+        ));
+        assert!(!is_active_sudo_prompt("Password:"));
+        assert!(!is_active_sudo_prompt(" [sudo] password for deploy:"));
+    }
+
+    #[test]
+    fn agente_usa_allowlist_estrita() {
+        assert_eq!(agent_binary(None).unwrap(), "claude");
+        assert_eq!(agent_binary(Some("claude")).unwrap(), "claude");
+        assert_eq!(agent_binary(Some("codex")).unwrap(), "codex");
+        assert!(agent_binary(Some("codex; touch /tmp/pwned")).is_err());
     }
 
     #[test]

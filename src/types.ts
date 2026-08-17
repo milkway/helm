@@ -49,6 +49,8 @@ export interface SessionInfo {
   params: import("./lib/ipc").SessionParams | null;
   /** sessão aguardando input do usuário (Fase 8) */
   attention: boolean;
+  /** sudo aguarda autorização explícita para usar a credencial do cofre */
+  sudoPrompt: boolean;
 }
 
 export const STATUS_COLORS = {

@@ -7,6 +7,7 @@ export interface SessionParams {
   mode: "shell" | "tmux" | "clmux";
   sessionName?: string;
   projectDir?: string;
+  agent?: "claude" | "codex";
 }
 
 export function openSshSession(
@@ -38,6 +39,8 @@ export interface RemoteInfo {
   os: string | null;
   pkgManager: string | null;
   tmux: string | null;
+  claude: string | null;
+  codex: string | null;
 }
 
 export function detectRemote(hostId: string): Promise<RemoteInfo> {
@@ -58,6 +61,10 @@ export function installTmux(
 
 export function writeStdin(id: string, data: string): Promise<void> {
   return invoke("write_stdin", { id, data });
+}
+
+export function authorizeSudo(id: string): Promise<void> {
+  return invoke("authorize_sudo", { id });
 }
 
 export function resizePty(id: string, cols: number, rows: number): Promise<void> {
@@ -223,6 +230,17 @@ export interface AttentionPayload {
 
 export function onAttention(handler: (payload: AttentionPayload) => void): Promise<UnlistenFn> {
   return listen<AttentionPayload>("attention", (event) => handler(event.payload));
+}
+
+export interface SudoPromptPayload {
+  id: string;
+  active: boolean;
+}
+
+export function onSudoPrompt(
+  handler: (payload: SudoPromptPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<SudoPromptPayload>("sudo-prompt", (event) => handler(event.payload));
 }
 
 export function detachSession(id: string): Promise<void> {
