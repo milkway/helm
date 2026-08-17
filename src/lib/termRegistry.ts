@@ -28,7 +28,7 @@ import {
   isSudoCredential,
   useVaultStore,
 } from "../stores/vault";
-import { sessionUsesTmux, tmuxSessionName, type SessionStatus } from "../types";
+import { sessionUsesTmux, tmuxSessionName, type Host, type SessionStatus } from "../types";
 
 const THEME = {
   background: "#00000000",
@@ -69,8 +69,11 @@ export interface TermEntry {
 const entries = new Map<string, TermEntry>();
 const lastPtySizes = new WeakMap<TermEntry, { cols: number; rows: number }>();
 const pending = new Map<string, Promise<TermEntry>>();
+type ConnectAbort = { aborted: boolean };
 /** sinal de cancelamento p/ connects em voo (aba fechada durante o connect) */
-const pendingAbort = new Map<string, { aborted: boolean }>();
+const pendingAbort = new Map<string, ConnectAbort>();
+/** uma única preparação/instalação automática de tmux por host */
+const tmuxInstallations = new Map<string, Promise<boolean>>();
 /** holder DOM corrente de cada sessão (setado pelo TermHost montado) */
 const holders = new Map<string, { el: HTMLElement; fontSize: number }>();
 
@@ -184,7 +187,11 @@ export function ensureTerm(uiId: string, hostId: string): Promise<TermEntry> {
   return promise;
 }
 
-async function prepareSshPassword(hostId: string): Promise<void> {
+function throwIfAborted(abort: ConnectAbort): void {
+  if (abort.aborted) throw new Error("sessão cancelada durante a conexão");
+}
+
+async function prepareSshPassword(hostId: string, abort: ConnectAbort): Promise<void> {
   const host = useHostsStore.getState().hosts.find((item) => item.id === hostId);
   if (!host?.credentialRef) return;
 
@@ -199,20 +206,22 @@ async function prepareSshPassword(hostId: string): Promise<void> {
   if (vault.locked) {
     // unlock trata recusa/cancelamento sem lançar; a conexão segue e o ssh
     // oferece digitação interativa quando o cofre continuar bloqueado.
-    await vault.unlock();
+    try {
+      await vault.unlock();
+    } finally {
+      throwIfAborted(abort);
+    }
   }
 }
 
-async function prepareTmux(uiId: string, hostId: string): Promise<boolean> {
-  const host = useHostsStore.getState().hosts.find((item) => item.id === hostId);
-  const session = useSessionsStore.getState().sessions.find((item) => item.id === uiId);
-  if (!host || !session || !sessionUsesTmux(session, host) || !host.autoInstallTmux) {
-    return true;
-  }
-
+async function runTmuxInstallation(
+  uiId: string,
+  hostId: string,
+  host: Host,
+  abort: ConnectAbort,
+): Promise<boolean> {
   const setAutoTmux = useUiStore.getState().setAutoTmux;
   const openManual = (initialInfo?: Awaited<ReturnType<typeof detectRemote>>, initialError?: string) => {
-    setAutoTmux(null);
     useUiStore.getState().openModal({
       kind: "installTmux",
       hostId,
@@ -223,60 +232,106 @@ async function prepareTmux(uiId: string, hostId: string): Promise<boolean> {
     return false;
   };
 
-  setAutoTmux({ hostId, phase: "detecting" });
-  let info: Awaited<ReturnType<typeof detectRemote>>;
   try {
-    info = await detectRemote(hostId);
-  } catch (e) {
-    return openManual(undefined, String(e));
-  }
+    setAutoTmux({ hostId, phase: "detecting" });
+    let info: Awaited<ReturnType<typeof detectRemote>>;
+    try {
+      info = await detectRemote(hostId);
+    } catch (e) {
+      throwIfAborted(abort);
+      return openManual(undefined, String(e));
+    }
+    throwIfAborted(abort);
 
-  if (info.tmux) {
-    setAutoTmux(null);
+    if (info.tmux) return true;
+    if (!info.pkgManager) return openManual(info);
+
+    let vault = useVaultStore.getState();
+    if (vault.locked) {
+      setAutoTmux({ hostId, phase: "unlocking" });
+      try {
+        await vault.unlock();
+      } finally {
+        throwIfAborted(abort);
+      }
+      vault = useVaultStore.getState();
+    }
+
+    const sudoCreds = vault.creds.filter(isSudoCredential);
+    const credential =
+      sudoCreds.find((cred) => cred.id === host.credentialRef) ??
+      sudoCreds.find((cred) => cred.scope === "NOPASSWD");
+    if (vault.locked || !credential) return openManual(info);
+
+    setAutoTmux({ hostId, phase: "installing" });
+    try {
+      await installTmux(hostId, info.pkgManager, { credentialId: credential.id });
+    } catch (e) {
+      throwIfAborted(abort);
+      return openManual(info, String(e));
+    }
+    throwIfAborted(abort);
+
+    if (!host.autoAttach) {
+      try {
+        await saveHost({ ...host, autoAttach: true });
+        throwIfAborted(abort);
+        await useHostsStore.getState().load();
+        throwIfAborted(abort);
+      } catch {
+        throwIfAborted(abort);
+        // tmux já foi instalado; falha ao persistir auto-attach não bloqueia a sessão pedida.
+      }
+    }
+    return true;
+  } finally {
+    const autoTmux = useUiStore.getState().autoTmux;
+    if (autoTmux?.hostId === hostId) setAutoTmux(null);
+  }
+}
+
+async function prepareTmux(
+  uiId: string,
+  hostId: string,
+  abort: ConnectAbort,
+): Promise<boolean> {
+  const host = useHostsStore.getState().hosts.find((item) => item.id === hostId);
+  const session = useSessionsStore.getState().sessions.find((item) => item.id === uiId);
+  if (!host || !session || !sessionUsesTmux(session, host) || !host.autoInstallTmux) {
     return true;
   }
-  if (!info.pkgManager) return openManual(info);
 
-  let vault = useVaultStore.getState();
-  if (vault.locked) {
-    setAutoTmux({ hostId, phase: "unlocking" });
-    await vault.unlock();
-    vault = useVaultStore.getState();
-  }
-
-  const sudoCreds = vault.creds.filter(isSudoCredential);
-  const credential =
-    sudoCreds.find((cred) => cred.id === host.credentialRef) ??
-    sudoCreds.find((cred) => cred.scope === "NOPASSWD");
-  if (vault.locked || !credential) return openManual(info);
-
-  setAutoTmux({ hostId, phase: "installing" });
-  try {
-    await installTmux(hostId, info.pkgManager, { credentialId: credential.id });
-  } catch (e) {
-    return openManual(info, String(e));
-  }
-
-  if (!host.autoAttach) {
+  const inflight = tmuxInstallations.get(hostId);
+  if (inflight) {
     try {
-      await saveHost({ ...host, autoAttach: true });
-      await useHostsStore.getState().load();
+      await inflight;
     } catch {
-      // tmux já foi instalado; falha ao persistir auto-attach não bloqueia a sessão pedida.
+      // O dono trata falha/ação manual; esta aba segue para o erro normal da conexão.
     }
+    throwIfAborted(abort);
+    return true;
   }
-  setAutoTmux(null);
-  return true;
+
+  const installation = runTmuxInstallation(uiId, hostId, host, abort);
+  tmuxInstallations.set(hostId, installation);
+  try {
+    return await installation;
+  } finally {
+    if (tmuxInstallations.get(hostId) === installation) tmuxInstallations.delete(hostId);
+  }
 }
 
 async function createEntry(
   uiId: string,
   hostId: string,
-  abort: { aborted: boolean },
+  abort: ConnectAbort,
 ): Promise<TermEntry> {
   const setStatus = useSessionsStore.getState().setStatus;
-  await prepareSshPassword(hostId);
-  if (!(await prepareTmux(uiId, hostId))) {
+  await prepareSshPassword(hostId, abort);
+  throwIfAborted(abort);
+  const tmuxReady = await prepareTmux(uiId, hostId, abort);
+  throwIfAborted(abort);
+  if (!tmuxReady) {
     setStatus(uiId, "error");
     throw new Error("tmux installation requires user action");
   }
@@ -284,6 +339,7 @@ async function createEntry(
   // A fonte PRECISA estar carregada antes do xterm medir a célula — métricas
   // da fonte fallback deixam espaçamento e geometria errados.
   await ensureFonts();
+  throwIfAborted(abort);
 
   const ptyId = `${uiId}-${crypto.randomUUID().slice(0, 8)}`;
   const disposers: Array<() => void> = [];
@@ -337,6 +393,7 @@ async function createEntry(
   // Listeners ANTES do spawn: os primeiros bytes chegam no arranque.
   try {
     await ensureSessionListeners();
+    throwIfAborted(abort);
   } catch (error) {
     cleanup();
     throw error;
@@ -382,8 +439,9 @@ async function createEntry(
     // falha ao abrir (ex.: host sumiu do DB): libera listeners/terminal/DOM em
     // vez de vazá-los; status "error" mostra o overlay com retry (o terminal,
     // que antes exibia o texto do erro, é descartado aqui)
-    setStatus(uiId, "error");
     cleanup();
+    throwIfAborted(abort);
+    setStatus(uiId, "error");
     throw err;
   }
   disposers.push(() => void closeSession(ptyId));
