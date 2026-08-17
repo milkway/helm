@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 use tauri::State;
 use zeroize::Zeroizing;
@@ -114,6 +114,82 @@ fn ssh_command(target: &str, port: Option<u16>, remote_cmd: &str) -> Command {
     cmd
 }
 
+const REMOTE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(180);
+
+fn run_with_timeout(
+    mut cmd: Command,
+    timeout: Duration,
+    stdin_input: Option<&[u8]>,
+    operation: &str,
+) -> Result<Output, String> {
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("falha ao iniciar {operation}: {e}"))?;
+    let deadline = Instant::now() + timeout;
+
+    if let Some(input) = stdin_input {
+        let write_result = (|| -> std::io::Result<()> {
+            let mut stdin = child.stdin.take().ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "stdin indisponível")
+            })?;
+            stdin.write_all(input)?;
+            stdin.write_all(b"\n")
+        })();
+        if let Err(err) = write_result {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("falha ao enviar stdin para {operation}: {err}"));
+        }
+    }
+    drop(child.stdin.take());
+
+    // Drena os pipes em paralelo para que output volumoso não bloqueie o filho.
+    let mut stdout = child.stdout.take().ok_or("stdout indisponível")?;
+    let mut stderr = child.stderr.take().ok_or("stderr indisponível")?;
+    let stdout_reader = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).map(|_| output)
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        stderr.read_to_end(&mut output).map(|_| output)
+    });
+
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let kill_error = child.kill().err();
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err(match kill_error {
+                Some(err) => format!(
+                    "{operation} excedeu o timeout de {}s; falha ao encerrar ssh: {err}",
+                    timeout.as_secs()
+                ),
+                None => format!(
+                    "{operation} excedeu o timeout de {}s; processo ssh encerrado",
+                    timeout.as_secs()
+                ),
+            });
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| format!("falha ao coletar stdout de {operation}"))?
+        .map_err(|e| e.to_string())?;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| format!("falha ao coletar stderr de {operation}"))?
+        .map_err(|e| e.to_string())?;
+    Ok(Output { status, stdout, stderr })
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TestResult {
@@ -128,9 +204,12 @@ pub async fn test_connection(draft: HostDraft) -> Result<TestResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let target = target_of(&draft.user, &draft.host)?;
         let start = Instant::now();
-        let output = ssh_command(&target, draft.port, "echo __HELM_OK__; tmux -V 2>/dev/null || true")
-            .output()
-            .map_err(|e| e.to_string())?;
+        let output = run_with_timeout(
+            ssh_command(&target, draft.port, "echo __HELM_OK__; tmux -V 2>/dev/null || true"),
+            REMOTE_COMMAND_TIMEOUT,
+            None,
+            "teste de conexão",
+        )?;
         let latency_ms = start.elapsed().as_millis() as u64;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let ok = stdout.contains("__HELM_OK__");
@@ -165,9 +244,12 @@ pub async fn detect_remote(db: State<'_, Db>, host_id: String) -> Result<RemoteI
     let host = db::get_host(&db, &host_id)?;
     tauri::async_runtime::spawn_blocking(move || {
         let target = target_of(&host.user, &host.host)?;
-        let output = ssh_command(&target, host.port, DETECT_SCRIPT)
-            .output()
-            .map_err(|e| e.to_string())?;
+        let output = run_with_timeout(
+            ssh_command(&target, host.port, DETECT_SCRIPT),
+            REMOTE_COMMAND_TIMEOUT,
+            None,
+            "detecção remota",
+        )?;
         if !output.status.success() && output.stdout.is_empty() {
             return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
         }
@@ -199,8 +281,6 @@ fn install_command(pkg_manager: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
-
-const INSTALL_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -252,7 +332,16 @@ pub async fn install_tmux(
                 return Err("credencial sem escopo compatível com sudo".into());
             }
             if has_secret {
-                Some(Zeroizing::new(vault::get_secret(&db, &vault, cred_id)?))
+                match vault::get_secret(&db, &vault, cred_id) {
+                    Ok(secret) => Some(Zeroizing::new(secret)),
+                    Err(err) if err.contains("No matching entry") => {
+                        eprintln!(
+                            "[remote] segredo da credencial {cred_id} ausente no keyring; tentando sudo sem senha: {err}"
+                        );
+                        None
+                    }
+                    Err(err) => return Err(err),
+                }
             } else {
                 None
             }
@@ -272,59 +361,13 @@ pub async fn install_tmux(
             format!("sudo -n {install}")
         };
         let remote_cmd = format!("{sudo} 2>&1 && printf '__HELM_TMUX__'; tmux -V 2>/dev/null");
-        let mut child = ssh_command(&target, host.port, &remote_cmd)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        let deadline = Instant::now() + INSTALL_TIMEOUT;
-
-        if let Some(pwd) = &password {
-            let mut stdin = child.stdin.take().ok_or("stdin indisponível")?;
-            // senha SÓ aqui: pipe direto ao sudo -S remoto
-            stdin.write_all(pwd.as_bytes()).map_err(|e| e.to_string())?;
-            stdin.write_all(b"\n").map_err(|e| e.to_string())?;
-            drop(stdin);
-        }
-        // wait_with_output não oferece timeout. Drena os pipes em paralelo para
-        // que output volumoso do package manager não bloqueie o filho.
-        drop(child.stdin.take());
-        let mut stdout = child.stdout.take().ok_or("stdout indisponível")?;
-        let mut stderr = child.stderr.take().ok_or("stderr indisponível")?;
-        let stdout_reader = std::thread::spawn(move || {
-            let mut output = Vec::new();
-            stdout.read_to_end(&mut output).map(|_| output)
-        });
-        let stderr_reader = std::thread::spawn(move || {
-            let mut output = Vec::new();
-            stderr.read_to_end(&mut output).map(|_| output)
-        });
-
-        loop {
-            if child.try_wait().map_err(|e| e.to_string())?.is_some() {
-                break;
-            }
-            if Instant::now() >= deadline {
-                let kill_error = child.kill().err();
-                let _ = child.wait();
-                return Err(match kill_error {
-                    Some(e) => format!(
-                        "instalação remota excedeu o timeout de 180s; falha ao encerrar ssh: {e}"
-                    ),
-                    None => "instalação remota excedeu o timeout de 180s; processo ssh encerrado"
-                        .to_string(),
-                });
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-
-        let stdout = stdout_reader
-            .join()
-            .map_err(|_| "falha ao coletar stdout da instalação".to_string())?
-            .map_err(|e| e.to_string())?;
-        let stderr = stderr_reader
-            .join()
-            .map_err(|_| "falha ao coletar stderr da instalação".to_string())?
-            .map_err(|e| e.to_string())?;
-        let stdout = String::from_utf8_lossy(&stdout);
+        let output = run_with_timeout(
+            ssh_command(&target, host.port, &remote_cmd),
+            INSTALL_TIMEOUT,
+            password.as_ref().map(|pwd| pwd.as_bytes()),
+            "instalação remota",
+        )?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
         let version = stdout
             .split("__HELM_TMUX__")
             .nth(1)
@@ -333,7 +376,7 @@ pub async fn install_tmux(
         match version {
             Some(v) => Ok(v),
             None => {
-                let stderr = String::from_utf8_lossy(&stderr);
+                let stderr = String::from_utf8_lossy(&output.stderr);
                 let last = stdout
                     .lines()
                     .rev()

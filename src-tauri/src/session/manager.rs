@@ -183,9 +183,11 @@ enum ExitKind {
 }
 
 fn classify_exit_code(exit_code: Option<u32>) -> ExitKind {
+    // O ssh reserva 255 para falhas próprias (conexão/autenticação). Qualquer
+    // outro status veio do comando/shell remoto e representa encerramento.
     match exit_code {
-        Some(0) => ExitKind::Clean,
-        Some(_) => ExitKind::Failure,
+        Some(255) => ExitKind::Failure,
+        Some(_) => ExitKind::Clean,
         None => ExitKind::Unknown,
     }
 }
@@ -879,6 +881,7 @@ mod tests {
     #[test]
     fn classifica_exit_code_para_reconexao() {
         assert_eq!(classify_exit_code(Some(0)), ExitKind::Clean);
+        assert_eq!(classify_exit_code(Some(1)), ExitKind::Clean);
         assert_eq!(classify_exit_code(Some(255)), ExitKind::Failure);
         assert_eq!(classify_exit_code(None), ExitKind::Unknown);
     }
