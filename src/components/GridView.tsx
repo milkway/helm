@@ -36,13 +36,15 @@ function GridCard({ session, host, dense }: { session: SessionInfo; host?: Host;
   useEffect(() => {
     let dispose: (() => void) | undefined;
     let cancelled = false;
-    void ensureTerm(session.id, session.hostId).then((entry) => {
-      if (cancelled) return;
-      const off = entry.term.onSelectionChange(() =>
-        setHasSelection(entry.term.getSelection().length > 0),
-      );
-      dispose = () => off.dispose();
-    });
+    void ensureTerm(session.id, session.hostId)
+      .then((entry) => {
+        if (cancelled) return;
+        const off = entry.term.onSelectionChange(() =>
+          setHasSelection(entry.term.getSelection().length > 0),
+        );
+        dispose = () => off.dispose();
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
       dispose?.();

@@ -9,7 +9,7 @@ import { Inspector } from "./components/Inspector";
 import { VaultModal } from "./components/VaultModal";
 import { HostModal } from "./components/HostModal";
 import { NewSessionModal } from "./components/NewSessionModal";
-import { InstallTmuxModal } from "./components/InstallTmuxModal";
+import { AutoInstallTmuxProgress, InstallTmuxModal } from "./components/InstallTmuxModal";
 import { CommandPalette } from "./components/CommandPalette";
 import { AboutModal } from "./components/AboutModal";
 import { EmptyState } from "./components/EmptyState";
@@ -29,6 +29,7 @@ export default function App() {
   const loadLang = useLangStore((s) => s.load);
   const hosts = useHostsStore((s) => s.hosts);
   const hostsLoaded = useHostsStore((s) => s.loaded);
+  const hostsError = useHostsStore((s) => s.error);
 
   useEffect(() => {
     void loadPrefs();
@@ -55,7 +56,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [togglePalette]);
 
-  const showEmpty = hostsLoaded && hosts.length === 0;
+  const showEmpty = hostsLoaded && !hostsError && hosts.length === 0;
 
   return (
     <div className="app">
@@ -72,10 +73,19 @@ export default function App() {
       <VaultModal />
       <CommandPalette />
       <VpnPanel />
+      <AutoInstallTmuxProgress />
       {modal?.kind === "addHost" && <HostModal />}
       {modal?.kind === "editHost" && <HostModal editHostId={modal.hostId} />}
       {modal?.kind === "newSession" && <NewSessionModal presetHostId={modal.hostId} />}
-      {modal?.kind === "installTmux" && <InstallTmuxModal hostId={modal.hostId} />}
+      {modal?.kind === "installTmux" && (
+        <InstallTmuxModal
+          key={`${modal.hostId}:${modal.resumeSessionId ?? "manual"}`}
+          hostId={modal.hostId}
+          resumeSessionId={modal.resumeSessionId}
+          initialInfo={modal.initialInfo}
+          initialError={modal.initialError}
+        />
+      )}
       {modal?.kind === "about" && <AboutModal />}
     </div>
   );

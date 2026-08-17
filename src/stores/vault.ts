@@ -1,21 +1,23 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import {
+  onVaultStatus,
+  vaultDelete,
+  vaultList,
+  vaultLock,
+  vaultReveal,
+  vaultSave,
+  vaultStatus,
+  vaultUnlock,
+  type VaultCredentialMeta,
+} from "../lib/ipc";
 
-export interface CredMeta {
-  id: string;
-  kind: "ssh_key" | "password";
-  label: string;
-  algo: string | null;
-  scope: string | null;
-  lastUsed: string | null;
-  /** false = só metadados (NOPASSWD, chave sem passphrase) */
-  hasSecret: boolean;
-}
+export type CredMeta = VaultCredentialMeta;
 
-interface VaultStatus {
-  locked: boolean;
-  count: number;
+export function isSudoCredential(cred: CredMeta): boolean {
+  return (
+    cred.kind === "password" &&
+    ((cred.scope ?? "").toLowerCase().includes("sudo") || cred.scope === "NOPASSWD")
+  );
 }
 
 interface VaultState {
@@ -35,6 +37,8 @@ interface VaultState {
   reveal: (id: string) => Promise<string>;
 }
 
+let unlockRequest: Promise<void> | null = null;
+
 export const useVaultStore = create<VaultState>((set, get) => ({
   locked: true,
   count: 0,
@@ -47,50 +51,53 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   closeModal: () => set({ modalOpen: false }),
 
   refresh: async () => {
-    const status = await invoke<VaultStatus>("vault_status");
-    set({ locked: status.locked, count: status.count });
-    if (!status.locked) {
-      const creds = await invoke<CredMeta[]>("vault_list");
-      set({ creds });
+    try {
+      const status = await vaultStatus();
+      const creds = status.locked ? [] : await vaultList();
+      set({ locked: status.locked, count: status.count, creds, error: null });
+    } catch (e) {
+      set({ error: String(e) });
     }
   },
 
   unlock: async () => {
-    if (get().busy) return;
-    set({ busy: true, error: null });
-    try {
-      const status = await invoke<VaultStatus>("vault_unlock");
-      set({ locked: status.locked, count: status.count });
-      const creds = await invoke<CredMeta[]>("vault_list");
-      set({ creds });
-    } catch (e) {
-      set({ error: String(e) });
-    } finally {
-      set({ busy: false });
-    }
+    if (unlockRequest) return unlockRequest;
+    unlockRequest = (async () => {
+      set({ busy: true, error: null });
+      try {
+        const status = await vaultUnlock();
+        const creds = await vaultList();
+        set({ locked: status.locked, count: status.count, creds });
+      } catch (e) {
+        set({ error: String(e) });
+      } finally {
+        set({ busy: false });
+        unlockRequest = null;
+      }
+    })();
+    return unlockRequest;
   },
 
   lock: async () => {
-    const status = await invoke<VaultStatus>("vault_lock");
+    const status = await vaultLock();
     set({ locked: status.locked, count: status.count, creds: [] });
   },
 
   save: async (meta, secret) => {
-    await invoke("vault_save", { meta, secret });
+    await vaultSave(meta, secret);
     await get().refresh();
   },
 
   remove: async (id) => {
-    await invoke("vault_delete", { id });
+    await vaultDelete(id);
     await get().refresh();
   },
 
-  reveal: (id) => invoke<string>("vault_reveal", { id }),
+  reveal: vaultReveal,
 }));
 
 // estado ao vivo (auto-lock dispara no Rust)
-const unlistenStatus = listen<VaultStatus>("vault-status", (event) => {
-  const { locked, count } = event.payload;
+const unlistenStatus = onVaultStatus(({ locked, count }) => {
   useVaultStore.setState((s) => ({
     locked,
     count: count >= 0 ? count : s.count,
