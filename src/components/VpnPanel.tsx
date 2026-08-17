@@ -63,7 +63,18 @@ export function VpnPanel() {
                   </div>
                 </div>
                 {connected ? (
-                  <span className="vpn-row__action" onClick={() => void disconnect(p.name)}>
+                  <span
+                    className="vpn-row__action"
+                    onClick={() => {
+                      if (
+                        p.hostsUsing > 0 &&
+                        !window.confirm(t("vp.disconnectConfirm", { n: p.hostsUsing }))
+                      ) {
+                        return;
+                      }
+                      void disconnect(p.name);
+                    }}
+                  >
                     {t("vp.disconnect")}
                   </span>
                 ) : (
