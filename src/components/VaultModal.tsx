@@ -22,27 +22,49 @@ function CredRow({ cred }: { cred: CredMeta }) {
   const [secret, setSecret] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revealGeneration = useRef(0);
 
-  // limpa o timer ao desmontar: senão a closure segura o segredo revelado
-  // (e agenda um setState) por até 10s depois de o modal fechar
-  useEffect(() => () => {
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-  }, []);
+  // Trocar de credencial limpa o segredo anterior; fechar o modal/desmontar
+  // também cancela o timer e invalida respostas de reveal ainda pendentes.
+  useEffect(() => {
+    revealGeneration.current += 1;
+    setSecret(null);
+    if (hideTimer.current) {
+      clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+    return () => {
+      revealGeneration.current += 1;
+      if (hideTimer.current) {
+        clearTimeout(hideTimer.current);
+        hideTimer.current = null;
+      }
+    };
+  }, [cred.id]);
 
   const isKey = cred.kind === "ssh_key";
   const badge = isKey ? (cred.algo ?? "key") : (cred.scope ?? "senha");
   const noSecretNote = isKey ? t("vault.noPassphrase") : t("vault.nopasswd");
 
   const doReveal = () => {
-    if (hideTimer.current) clearTimeout(hideTimer.current);
+    if (hideTimer.current) {
+      clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
     if (secret) {
+      revealGeneration.current += 1;
       setSecret(null);
       return;
     }
+    const generation = ++revealGeneration.current;
     void reveal(cred.id)
       .then((s) => {
+        if (revealGeneration.current !== generation) return;
         setSecret(s);
-        hideTimer.current = setTimeout(() => setSecret(null), 10_000);
+        hideTimer.current = setTimeout(() => {
+          setSecret(null);
+          hideTimer.current = null;
+        }, 10_000);
       })
       .catch(() => {});
   };

@@ -217,13 +217,14 @@ pub async fn install_tmux(
     pkg_manager: String,
     auth: InstallAuth,
 ) -> Result<String, String> {
+    let supplied_password = auth.password.map(Zeroizing::new);
     let host = db::get_host(&db, &host_id)?;
     let install = install_command(&pkg_manager)
         .ok_or_else(|| format!("package manager não suportado: {pkg_manager}"))?;
 
     // resolve a senha ANTES do spawn_blocking (State não atravessa threads).
     // Zeroizing zera a memória da senha ao sair do escopo (fim do closure).
-    let password: Option<Zeroizing<String>> = match (&auth.credential_id, &auth.password) {
+    let password: Option<Zeroizing<String>> = match (&auth.credential_id, supplied_password) {
         (Some(cred_id), _) => {
             let (kind, scope, has_secret): (String, Option<String>, bool) = {
                 let conn = db.0.lock().unwrap();
@@ -254,7 +255,7 @@ pub async fn install_tmux(
                 None
             }
         }
-        (None, Some(pwd)) if !pwd.is_empty() => Some(Zeroizing::new(pwd.clone())),
+        (None, Some(pwd)) if !pwd.is_empty() => Some(pwd),
         _ => None,
     };
 
