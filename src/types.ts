@@ -53,6 +53,8 @@ export interface SessionInfo {
   sudoPrompt: boolean;
   /** últimas linhas sem ANSI que contextualizam o prompt detectado */
   sudoContext: string;
+  /** disponibilidade da credencial sudo correspondente ao host */
+  sudoCredential: import("./lib/ipc").SudoCredentialState;
 }
 
 export const STATUS_COLORS = {

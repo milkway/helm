@@ -117,64 +117,6 @@ pub(crate) fn has_ssh_password_credential(
     )
 }
 
-#[cfg(test)]
-pub(crate) fn has_sudo_password_credential(
-    conn: &Connection,
-    id: &str,
-) -> rusqlite::Result<bool> {
-    conn.query_row(
-        "SELECT EXISTS(
-            SELECT 1 FROM credentials_meta
-            WHERE id = ?1
-              AND kind = 'password'
-              AND LOWER(COALESCE(scope, '')) LIKE '%sudo%'
-              AND has_secret = 1
-        )",
-        [id],
-        |row| row.get(0),
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn find_sudo_password_credential_for_host(
-    conn: &Connection,
-    host: &Host,
-) -> rusqlite::Result<Option<String>> {
-    let (_, candidates) = sudo_password_credential_candidates_for_host(conn, host)?;
-
-    if candidates.len() > 1 {
-        eprintln!(
-            "[db] {} credenciais sudo correspondem exatamente ao host {}",
-            candidates.len(),
-            host.id
-        );
-    }
-
-    Ok(match candidates.as_slice() {
-        [id] => Some(id.clone()),
-        _ => None,
-    })
-}
-
-#[cfg(test)]
-pub(crate) fn has_unmatched_sudo_password_credential_for_host(
-    conn: &Connection,
-    host: &Host,
-) -> rusqlite::Result<bool> {
-    let (eligible_count, candidates) = sudo_password_credential_candidates_for_host(conn, host)?;
-    Ok(eligible_count > 0 && candidates.is_empty())
-}
-
-#[cfg(test)]
-fn sudo_password_credential_candidates_for_host(
-    conn: &Connection,
-    host: &Host,
-) -> rusqlite::Result<(usize, Vec<String>)> {
-    let eligible = sudo_password_credentials(conn)?;
-    let candidates = matching_sudo_password_credentials(host, &eligible);
-    Ok((eligible.len(), candidates))
-}
-
 pub(crate) type SudoPasswordCredential = (String, String);
 
 fn sudo_password_credentials(
@@ -425,9 +367,8 @@ pub fn delete_host(db: State<'_, Db>, id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_sudo_password_credential_for_host, has_ssh_password_credential,
-        has_sudo_password_credential, has_unmatched_sudo_password_credential_for_host, migrate,
-        Host, MIGRATIONS,
+        has_ssh_password_credential, migrate, resolve_sudo_password_credential,
+        sudo_password_credentials, Host, MIGRATIONS,
     };
     use rusqlite::Connection;
 
@@ -494,14 +435,19 @@ mod tests {
         )
         .unwrap();
 
-        assert!(has_sudo_password_credential(&conn, "sudo").unwrap());
-        assert!(has_sudo_password_credential(&conn, "ssh-sudo").unwrap());
-        assert!(has_sudo_password_credential(&conn, "upper").unwrap());
-        assert!(!has_sudo_password_credential(&conn, "ssh").unwrap());
-        assert!(!has_sudo_password_credential(&conn, "nopasswd").unwrap());
-        assert!(!has_sudo_password_credential(&conn, "empty").unwrap());
-        assert!(!has_sudo_password_credential(&conn, "key").unwrap());
-        assert!(!has_sudo_password_credential(&conn, "missing").unwrap());
+        let ids: Vec<String> = sudo_password_credentials(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert!(ids.contains(&"sudo".into()));
+        assert!(ids.contains(&"ssh-sudo".into()));
+        assert!(ids.contains(&"upper".into()));
+        assert!(!ids.contains(&"ssh".into()));
+        assert!(!ids.contains(&"nopasswd".into()));
+        assert!(!ids.contains(&"empty".into()));
+        assert!(!ids.contains(&"key".into()));
+        assert!(!ids.contains(&"missing".into()));
     }
 
     #[test]
@@ -533,9 +479,10 @@ mod tests {
             startup_mode: "shell".into(),
         };
 
+        let eligible = sudo_password_credentials(&conn).unwrap();
         assert_eq!(
-            find_sudo_password_credential_for_host(&conn, &host).unwrap(),
-            Some("atlas".into())
+            resolve_sudo_password_credential(&host, &eligible),
+            (Some("atlas".into()), false)
         );
 
         conn.execute(
@@ -544,7 +491,8 @@ mod tests {
             [],
         )
         .unwrap();
-        assert_eq!(find_sudo_password_credential_for_host(&conn, &host).unwrap(), None);
+        let eligible = sudo_password_credentials(&conn).unwrap();
+        assert_eq!(resolve_sudo_password_credential(&host, &eligible).0, None);
     }
 
     #[test]
@@ -574,11 +522,12 @@ mod tests {
             startup_mode: "shell".into(),
         };
 
-        assert_eq!(find_sudo_password_credential_for_host(&conn, &host).unwrap(), None);
+        let eligible = sudo_password_credentials(&conn).unwrap();
+        assert_eq!(resolve_sudo_password_credential(&host, &eligible).0, None);
 
         host.host = "api".into();
         host.name = "API".into();
-        assert_eq!(find_sudo_password_credential_for_host(&conn, &host).unwrap(), None);
+        assert_eq!(resolve_sudo_password_credential(&host, &eligible).0, None);
 
         conn.execute(
             "INSERT INTO credentials_meta (id, kind, label, scope, has_secret)
@@ -586,8 +535,9 @@ mod tests {
             [],
         )
         .unwrap();
+        let eligible = sudo_password_credentials(&conn).unwrap();
         assert_eq!(
-            find_sudo_password_credential_for_host(&conn, &host).unwrap(),
+            resolve_sudo_password_credential(&host, &eligible).0,
             Some("api-exact".into())
         );
     }
@@ -617,13 +567,46 @@ mod tests {
             startup_mode: "shell".into(),
         };
 
+        let eligible = sudo_password_credentials(&conn).unwrap();
         assert_eq!(
-            find_sudo_password_credential_for_host(&conn, &host).unwrap(),
-            Some("api-port".into())
+            resolve_sudo_password_credential(&host, &eligible),
+            (Some("api-port".into()), false)
         );
-        assert!(!has_unmatched_sudo_password_credential_for_host(&conn, &host).unwrap());
 
         host.host = "other".into();
-        assert!(has_unmatched_sudo_password_credential_for_host(&conn, &host).unwrap());
+        assert_eq!(resolve_sudo_password_credential(&host, &eligible), (None, true));
+    }
+
+    #[test]
+    fn credencial_ref_sudo_e_o_fast_path_mesmo_com_label_nao_correspondente() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO credentials_meta (id, kind, label, scope, has_secret)
+             VALUES ('linked', 'password', 'rótulo legado', 'ssh · sudo', 1)",
+            [],
+        )
+        .unwrap();
+        let host = Host {
+            id: "host-linked".into(),
+            name: "API".into(),
+            group: String::new(),
+            user: Some("deploy".into()),
+            host: "api.internal".into(),
+            port: None,
+            credential_ref: Some("linked".into()),
+            vpn_profile: None,
+            auto_reconnect: true,
+            auto_install_tmux: false,
+            auto_attach: true,
+            project_dir: None,
+            startup_mode: "shell".into(),
+        };
+
+        let eligible = sudo_password_credentials(&conn).unwrap();
+        assert_eq!(
+            resolve_sudo_password_credential(&host, &eligible),
+            (Some("linked".into()), false)
+        );
     }
 }

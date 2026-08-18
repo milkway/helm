@@ -263,7 +263,10 @@ export interface SudoPromptPayload {
   id: string;
   active: boolean;
   context: string;
+  credential: SudoCredentialState;
 }
+
+export type SudoCredentialState = "none" | "unmatched" | "ok";
 
 export function onSudoPrompt(
   handler: (payload: SudoPromptPayload) => void,

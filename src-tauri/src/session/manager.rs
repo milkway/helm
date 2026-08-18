@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -27,6 +27,7 @@ const ERROR_RETRY_SECS: u64 = 60;
 /// instáveis; quedas após isso reiniciam o backoff como uma conexão real.
 const MIN_STABLE_SECS: u64 = 10;
 const EXIT_STATUS_WAIT: Duration = Duration::from_secs(5);
+const SUDO_AUTHORIZE_COOLDOWN: Duration = Duration::from_secs(3);
 
 pub struct Session {
     #[allow(dead_code)] // usado nas fases de latência
@@ -42,10 +43,8 @@ pub struct Session {
     // detecção de atenção (Fase 8)
     connected: AtomicBool,
     attention: AtomicBool,
-    sudo_consumed_before: AtomicU64,
-    sudo_dismissed_at: AtomicU64,
-    sudo_active_offset: AtomicU64,
     sudo_label_mismatch_warned: AtomicBool,
+    sudo_credential_unmatched: AtomicBool,
     sudo_credential_id: Mutex<Option<String>>,
     output_tail: Mutex<Tail>,
     last_output: Mutex<Instant>,
@@ -60,15 +59,23 @@ struct Io {
 struct Tail {
     buf: String,
     start_offset: u64,
+    consumed_before: u64,
+    dismissed: Option<(u64, String)>,
+    active: Option<u64>,
+    consumed_line: Option<String>,
+    last_authorized_at: Option<Instant>,
 }
 
 impl Default for Tail {
     fn default() -> Self {
         Self {
             buf: String::new(),
-            // Zero representa "nenhum prompt" nos atomics; o stream real
-            // começa em 1 para que o primeiro byte nunca colida com a sentinela.
-            start_offset: 1,
+            start_offset: 0,
+            consumed_before: 0,
+            dismissed: None,
+            active: None,
+            consumed_line: None,
+            last_authorized_at: None,
         }
     }
 }
@@ -85,9 +92,18 @@ impl Tail {
             return;
         }
 
-        // Corta em fronteira de char: len-400 pode cair no meio de um
+        let normal_cut = len - 400;
+        let protected_cut = self
+            .active
+            .and_then(|offset| offset.checked_sub(self.start_offset))
+            .filter(|offset| *offset <= len as u64)
+            .map_or(normal_cut, |offset| normal_cut.min(offset as usize));
+        // Enquanto um prompt está publicado, conserva desde o início de seu
+        // segmento. O teto absoluto evita crescimento sem limite se um TUI
+        // continuar redesenhando sem CR/LF.
+        let mut cut = protected_cut.max(len.saturating_sub(4096));
+        // Corta em fronteira de char: o índice pode cair no meio de um
         // multibyte e panicar (envenenaria o lock).
-        let mut cut = len - 400;
         while cut < len && !self.buf.is_char_boundary(cut) {
             cut += 1;
         }
@@ -97,8 +113,12 @@ impl Tail {
 
     fn reset(&mut self) {
         self.buf.clear();
-        // Mantém zero reservado como sentinela de offset ausente.
-        self.start_offset = 1;
+        self.start_offset = 0;
+        self.consumed_before = 0;
+        self.dismissed = None;
+        self.active = None;
+        self.consumed_line = None;
+        self.last_authorized_at = None;
     }
 }
 
@@ -152,6 +172,7 @@ struct SudoPromptPayload<'a> {
     id: &'a str,
     active: bool,
     context: String,
+    credential: &'a str,
 }
 
 fn set_attention(app: &AppHandle, session: &Session, id: &str, active: bool, reason: Option<&str>) {
@@ -161,20 +182,27 @@ fn set_attention(app: &AppHandle, session: &Session, id: &str, active: bool, rea
     }
 }
 
-fn emit_sudo_prompt(app: &AppHandle, id: &str, active: bool, context: String) {
+fn emit_sudo_prompt(
+    app: &AppHandle,
+    id: &str,
+    active: bool,
+    context: String,
+    credential: &'static str,
+) {
     let _ = app.emit(
         "sudo-prompt",
         SudoPromptPayload {
             id,
             active,
             context,
+            credential,
         },
     );
 }
 
-fn clear_sudo_prompt(app: &AppHandle, session: &Session, id: &str) {
-    if session.sudo_active_offset.swap(0, Ordering::Relaxed) != 0 {
-        emit_sudo_prompt(app, id, false, String::new());
+fn clear_sudo_prompt(app: &AppHandle, id: &str, tail: &mut Tail) {
+    if tail.active.take().is_some() {
+        emit_sudo_prompt(app, id, false, String::new(), "none");
     }
 }
 
@@ -283,48 +311,33 @@ fn sudo_prompt_bounds(line: &str) -> Option<(usize, usize)> {
     (!rest[..colon].trim().is_empty()).then_some((prompt_start, rest_start + colon + 1))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SudoPromptMatch {
+    /// Início do último segmento no buffer cru. O offset do prompt usa
+    /// exatamente este ponto, sem tentar remapear índices do texto limpo.
     start: usize,
-    end: usize,
     offset: u64,
+    line: String,
 }
 
 fn active_sudo_prompt(tail: &str, start_offset: u64) -> Option<SudoPromptMatch> {
-    let mut line_end = tail.len();
-    loop {
-        let line_start = tail[..line_end]
-            .rfind(['\r', '\n'])
-            .map_or(0, |separator| separator + 1);
-        let line = &tail[line_start..line_end];
-        if !strip_ansi(line).trim().is_empty() {
-            let (prompt_start, prompt_end) = sudo_prompt_bounds(line)?;
-            let start = line_start + prompt_start;
-            return Some(SudoPromptMatch {
-                start,
-                end: line_start + prompt_end,
-                offset: start_offset + start as u64,
-            });
-        }
-        if line_start == 0 {
-            return None;
-        }
-        line_end = line_start - 1;
-    }
+    let segment_start = tail.rfind(['\r', '\n']).map_or(0, |separator| separator + 1);
+    let clean = strip_ansi(&tail[segment_start..]);
+    let (prompt_start, prompt_end) = sudo_prompt_bounds(&clean)?;
+    Some(SudoPromptMatch {
+        start: segment_start,
+        offset: start_offset + segment_start as u64,
+        line: clean[prompt_start..prompt_end].trim().to_string(),
+    })
 }
 
 /// Prompt ativo do sudo padrão. CR também separa segmentos porque aplicações
 /// de terminal podem redesenhar sem LF. O prompt precisa estar no último
-/// segmento não-vazio; texto colado depois de `:` por CUP (status do tmux) é
+/// segmento; texto colado depois de `:` por CUP (status do tmux) é
 /// tolerado, mas qualquer output em uma linha/segmento posterior o invalida.
-#[cfg(test)]
-fn is_active_sudo_prompt(tail: &str) -> bool {
-    active_sudo_prompt(tail, 0).is_some()
-}
-
 /// Contexto curto e sem escapes para o usuário conferir de onde veio o
 /// prompt. Mantém o fim para nunca cortar justamente a linha do sudo.
-fn sudo_prompt_context(tail: &str, prompt: SudoPromptMatch) -> String {
+fn sudo_prompt_context(tail: &str, prompt: &SudoPromptMatch) -> String {
     const MAX_CONTEXT_CHARS: usize = 200;
 
     let preceding_clean = strip_ansi(&tail[..prompt.start]);
@@ -334,8 +347,7 @@ fn sudo_prompt_context(tail: &str, prompt: SudoPromptMatch) -> String {
         .filter(|line| !line.is_empty())
         .collect();
     let mut context_lines = lines[lines.len().saturating_sub(2)..].to_vec();
-    let prompt_text = strip_ansi(&tail[prompt.start..prompt.end]);
-    context_lines.push(prompt_text.trim());
+    context_lines.push(prompt.line.trim());
     let context = context_lines.join("\n");
     let char_count = context.chars().count();
     if char_count <= MAX_CONTEXT_CHARS {
@@ -346,23 +358,67 @@ fn sudo_prompt_context(tail: &str, prompt: SudoPromptMatch) -> String {
     }
 }
 
-fn visible_sudo_prompt(session: &Session, tail: &Tail) -> Option<SudoPromptMatch> {
-    active_sudo_prompt(&tail.buf, tail.start_offset).filter(|prompt| {
-        prompt.offset >= session.sudo_consumed_before.load(Ordering::Relaxed)
-            && prompt.offset != session.sudo_dismissed_at.load(Ordering::Relaxed)
-    })
+fn normalized_sudo_prompt_line(prompt: &SudoPromptMatch) -> String {
+    prompt.line.trim().to_lowercase()
 }
 
-#[cfg(test)]
-fn sudo_prompt_state(
-    tail: &str,
-    start_offset: u64,
-    consumed_before: u64,
-    dismissed_at: u64,
-) -> Option<SudoPromptMatch> {
-    active_sudo_prompt(tail, start_offset).filter(|prompt| {
-        prompt.offset >= consumed_before && prompt.offset != dismissed_at
-    })
+const SUDO_RETRY_MARKERS: &[&str] = &[
+    "sorry, try again",
+    "desculpe, tente novamente",
+    "lo siento, vuelva a intentarlo",
+    "lo siento, inténtelo de nuevo",
+    "désolé, réessayez",
+    "essayez de nouveau",
+];
+
+fn absolute_tail_slice(tail: &Tail, start_offset: u64, end_offset: u64) -> &str {
+    let mut start = start_offset
+        .saturating_sub(tail.start_offset)
+        .min(tail.buf.len() as u64) as usize;
+    let mut end = end_offset
+        .saturating_sub(tail.start_offset)
+        .min(tail.buf.len() as u64) as usize;
+    while start < tail.buf.len() && !tail.buf.is_char_boundary(start) {
+        start += 1;
+    }
+    while end > start && !tail.buf.is_char_boundary(end) {
+        end -= 1;
+    }
+    &tail.buf[start..end]
+}
+
+fn has_sudo_retry_between(tail: &Tail, start_offset: u64, prompt_offset: u64) -> bool {
+    let text = strip_ansi(absolute_tail_slice(tail, start_offset, prompt_offset)).to_lowercase();
+    SUDO_RETRY_MARKERS.iter().any(|marker| text.contains(marker))
+}
+
+impl Tail {
+    fn active_sudo_prompt(&self) -> Option<SudoPromptMatch> {
+        active_sudo_prompt(&self.buf, self.start_offset)
+    }
+
+    fn visible_sudo_prompt(&self) -> Option<SudoPromptMatch> {
+        let prompt = self.active_sudo_prompt()?;
+        if prompt.offset < self.consumed_before {
+            return None;
+        }
+
+        let normalized = normalized_sudo_prompt_line(&prompt);
+        if self.consumed_line.as_deref() == Some(normalized.as_str())
+            && !has_sudo_retry_between(self, self.consumed_before, prompt.offset)
+        {
+            return None;
+        }
+        if let Some((dismissed_offset, dismissed_line)) = &self.dismissed {
+            if prompt.offset == *dismissed_offset
+                || (dismissed_line == &normalized
+                    && !has_sudo_retry_between(self, *dismissed_offset, prompt.offset))
+            {
+                return None;
+            }
+        }
+        Some(prompt)
+    }
 }
 
 fn tail_after_consumed(tail: &Tail, consumed_before: u64) -> &str {
@@ -577,7 +633,6 @@ fn build_command(
     host: Option<&Host>,
     params: Option<&SessionParams>,
     askpass: Option<&AskpassAttempt>,
-    default_agent: Option<&str>,
 ) -> Result<CommandBuilder, String> {
     match host {
         None => {
@@ -653,9 +708,7 @@ fn build_command(
                 .and_then(|p| p.project_dir.clone())
                 .or_else(|| host.project_dir.clone());
 
-            let agent = params
-                .and_then(|p| p.agent.as_deref())
-                .or(default_agent);
+            let agent = params.and_then(|p| p.agent.as_deref());
             if let Some(remote) = remote_command(&mode, &name, dir.as_deref(), agent)? {
                 cmd.arg(remote);
             }
@@ -683,29 +736,40 @@ fn interruptible_sleep(session: &Session, secs: u64) -> bool {
 
 fn reset_sudo_tracking(app: &AppHandle, session: &Session, id: &str) {
     let mut tail = session.output_tail.lock().unwrap();
+    clear_sudo_prompt(app, id, &mut tail);
     tail.reset();
-    session.sudo_consumed_before.store(0, Ordering::Relaxed);
-    session.sudo_dismissed_at.store(0, Ordering::Relaxed);
-    clear_sudo_prompt(app, session, id);
 }
 
-fn ensure_sudo_credential(app: &AppHandle, session: &Session) {
+fn sudo_credential_availability(session: &Session) -> &'static str {
     if session.sudo_credential_id.lock().unwrap().is_some() {
-        return;
+        "ok"
+    } else if session.sudo_credential_unmatched.load(Ordering::Relaxed) {
+        "unmatched"
+    } else {
+        "none"
+    }
+}
+
+fn ensure_sudo_credential(app: &AppHandle, session: &Session) -> &'static str {
+    if session.sudo_credential_id.lock().unwrap().is_some() {
+        return "ok";
     }
     let (Some(host_id), Some(db)) = (session.host_id.as_deref(), app.try_state::<Db>()) else {
-        return;
+        return sudo_credential_availability(session);
     };
     let (host, candidates) = match db::get_host_and_sudo_password_credentials(&db, host_id) {
         Ok(result) => result,
         Err(e) => {
             eprintln!("[session] falha ao reler host para credencial sudo ({e})");
-            return;
+            return sudo_credential_availability(session);
         }
     };
     let (credential_id, unmatched_exists) =
         db::resolve_sudo_password_credential(&host, &candidates);
     let Some(credential_id) = credential_id else {
+        session
+            .sudo_credential_unmatched
+            .store(unmatched_exists, Ordering::Relaxed);
         if unmatched_exists
             && !session
                 .sudo_label_mismatch_warned
@@ -715,12 +779,16 @@ fn ensure_sudo_credential(app: &AppHandle, session: &Session) {
                 "[session] credencial sudo existe mas o label não casa com host/name/user@host — renomeie para 'sudo · user@<host>'"
             );
         }
-        return;
+        return if unmatched_exists { "unmatched" } else { "none" };
     };
     let mut current = session.sudo_credential_id.lock().unwrap();
     if current.is_none() {
         *current = Some(credential_id);
     }
+    session
+        .sudo_credential_unmatched
+        .store(false, Ordering::Relaxed);
+    "ok"
 }
 
 fn update_sudo_prompt_for_output(
@@ -730,47 +798,50 @@ fn update_sudo_prompt_for_output(
     text: &str,
     credential_checked_offset: &mut Option<u64>,
 ) {
-    let mut tail = session.output_tail.lock().unwrap();
-    tail.push(text);
+    let detected_offset = {
+        let mut tail = session.output_tail.lock().unwrap();
+        tail.push(text);
+        tail.visible_sudo_prompt().map(|prompt| prompt.offset)
+    };
 
-    let detected = visible_sudo_prompt(session, &tail);
-    if let Some(prompt) = detected {
+    let credential = if let Some(offset) = detected_offset {
         if session.sudo_credential_id.lock().unwrap().is_none()
-            && *credential_checked_offset != Some(prompt.offset)
+            && *credential_checked_offset != Some(offset)
         {
-            *credential_checked_offset = Some(prompt.offset);
-            // O lookup é curto e só ocorre uma vez por offset. Mantê-lo nesta
-            // passagem permite revalidar e decidir a emissão com um único lock
-            // da cauda, sem deixar um prompt parado aguardando outro chunk.
-            ensure_sudo_credential(app, session);
+            *credential_checked_offset = Some(offset);
+            // SELECTs e qualquer outra resolução acontecem sem o lock da
+            // cauda. Ao voltar, o offset é revalidado antes da publicação.
+            ensure_sudo_credential(app, session)
+        } else {
+            sudo_credential_availability(session)
         }
-    }
+    } else {
+        "none"
+    };
 
-    let visible = detected.filter(|_| session.sudo_credential_id.lock().unwrap().is_some());
-    match visible {
-        Some(prompt)
-            if session.sudo_active_offset.load(Ordering::Relaxed) != prompt.offset =>
-        {
-            let context = sudo_prompt_context(&tail.buf, prompt);
-            session
-                .sudo_active_offset
-                .store(prompt.offset, Ordering::Relaxed);
-            emit_sudo_prompt(app, id, true, context);
+    let mut tail = session.output_tail.lock().unwrap();
+    let visible = tail
+        .visible_sudo_prompt()
+        .filter(|prompt| Some(prompt.offset) == detected_offset);
+    match (visible, credential) {
+        (Some(prompt), "ok" | "unmatched") if tail.active != Some(prompt.offset) => {
+            let context = sudo_prompt_context(&tail.buf, &prompt);
+            tail.active = Some(prompt.offset);
+            emit_sudo_prompt(app, id, true, context, credential);
         }
-        Some(_) => {}
-        None => clear_sudo_prompt(app, session, id),
+        (Some(_), "ok" | "unmatched") => {}
+        _ => clear_sudo_prompt(app, id, &mut tail),
     }
 }
 
-fn configured_default_agent(app: &AppHandle) -> &'static str {
-    let Some(db) = app.try_state::<Db>() else {
-        return "claude";
-    };
-    match db::get_pref(db, "ui.defaultAgent".into()) {
-        Ok(Some(value)) if value == "codex" => "codex",
-        Ok(Some(value)) if value != "claude" => {
-            eprintln!("[session] agente padrão inválido {value:?}; usando 'claude'");
-            "claude"
+fn configured_default_agent(db: &State<'_, Db>) -> &'static str {
+    match db::get_pref(db.clone(), "ui.defaultAgent".into()) {
+        Ok(Some(value)) => {
+            let agent = agent_binary(Some(&value)).unwrap_or("claude");
+            if agent != value.as_str() {
+                eprintln!("[session] agente padrão inválido {value:?}; usando 'claude'");
+            }
+            agent
         }
         Ok(_) => "claude",
         Err(e) => {
@@ -846,20 +917,7 @@ fn manager_loop(
             None
         };
         let used_askpass = askpass.is_some();
-        let effective_mode_is_clmux = match (host.as_ref(), params.as_ref()) {
-            (_, Some(params)) => params.mode == "clmux",
-            (Some(host), None) => host.startup_mode == "clmux",
-            (None, None) => false,
-        };
-        let default_agent = (effective_mode_is_clmux
-            && params.as_ref().and_then(|params| params.agent.as_deref()).is_none())
-        .then(|| configured_default_agent(&app));
-        let cmd = match build_command(
-            host.as_ref(),
-            params.as_ref(),
-            askpass.as_ref(),
-            default_agent,
-        ) {
+        let cmd = match build_command(host.as_ref(), params.as_ref(), askpass.as_ref()) {
             Ok(cmd) => cmd,
             Err(e) => {
                 eprintln!("[session {id}] comando inválido: {e}");
@@ -1048,6 +1106,7 @@ fn manager_loop(
 struct SessionAuth {
     askpass_secret: Option<Zeroizing<String>>,
     sudo_credential_id: Option<String>,
+    sudo_credential_unmatched: bool,
 }
 
 fn start_session(
@@ -1071,10 +1130,8 @@ fn start_session(
         io: Mutex::new(None),
         connected: AtomicBool::new(false),
         attention: AtomicBool::new(false),
-        sudo_consumed_before: AtomicU64::new(0),
-        sudo_dismissed_at: AtomicU64::new(0),
-        sudo_active_offset: AtomicU64::new(0),
         sudo_label_mismatch_warned: AtomicBool::new(false),
+        sudo_credential_unmatched: AtomicBool::new(auth.sudo_credential_unmatched),
         sudo_credential_id: Mutex::new(auth.sudo_credential_id),
         output_tail: Mutex::new(Tail::default()),
         last_output: Mutex::new(Instant::now()),
@@ -1139,16 +1196,31 @@ pub fn open_ssh_session(
 ) -> Result<(), String> {
     let (host, sudo_candidates) =
         db::get_host_and_sudo_password_credentials(&db, &host_id)?;
-    if params.as_ref().is_some_and(|params| params.mode == "clmux") {
-        agent_binary(params.as_ref().and_then(|params| params.agent.as_deref()))?;
+    let mut params = params.unwrap_or_else(|| SessionParams {
+        mode: if host.auto_attach && host.startup_mode == "shell" {
+            "tmux".into()
+        } else {
+            host.startup_mode.clone()
+        },
+        session_name: None,
+        project_dir: None,
+        agent: None,
+    });
+    if params.mode == "clmux" {
+        let agent = match params.agent.as_deref() {
+            Some(agent) => agent_binary(Some(agent))?,
+            None => configured_default_agent(&db),
+        };
+        params.agent = Some(agent.to_string());
     }
-    let (sudo_credential_id, _) =
+    let (sudo_credential_id, sudo_credential_unmatched) =
         db::resolve_sudo_password_credential(&host, &sudo_candidates);
     let auth = SessionAuth {
         askpass_secret: resolve_ssh_password(&db, &vault, &host),
         sudo_credential_id,
+        sudo_credential_unmatched,
     };
-    start_session(app, &sessions, id, Some(host), (cols, rows), params, auth);
+    start_session(app, &sessions, id, Some(host), (cols, rows), Some(params), auth);
     Ok(())
 }
 
@@ -1162,13 +1234,14 @@ pub fn authorize_sudo(
 ) -> Result<(), String> {
     let session = get(&sessions, &id)?;
     let authorization_token = {
-        let tail = session.output_tail.lock().unwrap();
-        let Some(prompt) = visible_sudo_prompt(&session, &tail) else {
-            clear_sudo_prompt(&app, &session, &id);
+        let mut tail = session.output_tail.lock().unwrap();
+        ensure_sudo_authorize_cooldown(&tail)?;
+        let Some(prompt) = tail.visible_sudo_prompt() else {
+            clear_sudo_prompt(&app, &id, &mut tail);
             return Err("o prompt de sudo não está mais ativo".into());
         };
-        if session.sudo_active_offset.load(Ordering::Relaxed) != prompt.offset {
-            clear_sudo_prompt(&app, &session, &id);
+        if tail.active != Some(prompt.offset) {
+            clear_sudo_prompt(&app, &id, &mut tail);
             return Err("o prompt de sudo não está mais ativo".into());
         }
         prompt.offset
@@ -1188,30 +1261,34 @@ pub fn authorize_sudo(
     // tomado na ordem cauda → writer; a cauda é solta antes do I/O bloqueante.
     let mut reservation = None;
     let write_result = (|| -> Result<(), String> {
-        let tail = session.output_tail.lock().unwrap();
-        let current_prompt = visible_sudo_prompt(&session, &tail);
+        let mut tail = session.output_tail.lock().unwrap();
+        ensure_sudo_authorize_cooldown(&tail)?;
+        let current_prompt = tail.visible_sudo_prompt();
         let unchanged = current_prompt
+            .as_ref()
             .is_some_and(|prompt| prompt.offset == authorization_token)
-            && session.sudo_active_offset.load(Ordering::Relaxed) == authorization_token;
+            && tail.active == Some(authorization_token);
         if !unchanged {
             // Não apaga um prompt novo que possa ter substituído o token.
-            if current_prompt.is_none()
-                || session.sudo_active_offset.load(Ordering::Relaxed) == authorization_token
-            {
-                clear_sudo_prompt(&app, &session, &id);
+            if current_prompt.is_none() || tail.active == Some(authorization_token) {
+                clear_sudo_prompt(&app, &id, &mut tail);
             }
-            return Err("prompt mudou".into());
+            return Err("PROMPT_CHANGED: o prompt de sudo mudou".into());
         }
 
         let mut writer = session.writer.lock().unwrap();
         let writer = writer.as_mut().ok_or("sessão sem PTY ativo")?;
-        let previous_consumed = session.sudo_consumed_before.load(Ordering::Relaxed);
-        let previous_active = session.sudo_active_offset.load(Ordering::Relaxed);
-        reservation = Some((previous_consumed, previous_active));
-        session
-            .sudo_consumed_before
-            .store(tail.stream_len(), Ordering::Relaxed);
-        clear_sudo_prompt(&app, &session, &id);
+        let prompt = current_prompt.unwrap();
+        reservation = Some((
+            tail.consumed_before,
+            tail.consumed_line.clone(),
+            tail.active,
+            tail.last_authorized_at,
+        ));
+        tail.consumed_before = tail.stream_len();
+        tail.consumed_line = Some(normalized_sudo_prompt_line(&prompt));
+        tail.last_authorized_at = Some(Instant::now());
+        clear_sudo_prompt(&app, &id, &mut tail);
         drop(tail);
 
         writer
@@ -1222,23 +1299,21 @@ pub fn authorize_sudo(
         Ok(())
     })();
     if let Err(error) = write_result {
-        if let Some((previous_consumed, previous_active)) = reservation {
-            let tail = session.output_tail.lock().unwrap();
-            if let Some(prompt) = active_sudo_prompt(&tail.buf, tail.start_offset)
-                .filter(|prompt| prompt.offset == authorization_token)
-            {
-                session
-                    .sudo_consumed_before
-                    .store(previous_consumed, Ordering::Relaxed);
-                session
-                    .sudo_active_offset
-                    .store(previous_active, Ordering::Relaxed);
-                emit_sudo_prompt(
-                    &app,
-                    &id,
-                    true,
-                    sudo_prompt_context(&tail.buf, prompt),
-                );
+        if let Some((previous_consumed, previous_line, previous_active, previous_authorized)) =
+            reservation
+        {
+            let credential = sudo_credential_availability(&session);
+            let mut tail = session.output_tail.lock().unwrap();
+            tail.consumed_before = previous_consumed;
+            tail.consumed_line = previous_line;
+            tail.active = previous_active;
+            tail.last_authorized_at = previous_authorized;
+            if let Some(prompt) = tail.visible_sudo_prompt() {
+                if credential == "ok" || credential == "unmatched" {
+                    let context = sudo_prompt_context(&tail.buf, &prompt);
+                    tail.active = Some(prompt.offset);
+                    emit_sudo_prompt(&app, &id, true, context, credential);
+                }
             }
         }
         return Err(error);
@@ -1249,6 +1324,17 @@ pub fn authorize_sudo(
     Ok(())
 }
 
+fn ensure_sudo_authorize_cooldown(tail: &Tail) -> Result<(), String> {
+    if tail
+        .last_authorized_at
+        .is_some_and(|sent_at| sent_at.elapsed() < SUDO_AUTHORIZE_COOLDOWN)
+    {
+        Err("aguarde: senha já enviada".into())
+    } else {
+        Ok(())
+    }
+}
+
 #[tauri::command]
 pub fn dismiss_sudo_prompt(
     app: AppHandle,
@@ -1256,13 +1342,11 @@ pub fn dismiss_sudo_prompt(
     id: String,
 ) -> Result<(), String> {
     let session = get(&sessions, &id)?;
-    let tail = session.output_tail.lock().unwrap();
-    if let Some(prompt) = visible_sudo_prompt(&session, &tail) {
-        session
-            .sudo_dismissed_at
-            .store(prompt.offset, Ordering::Relaxed);
+    let mut tail = session.output_tail.lock().unwrap();
+    if let Some(prompt) = tail.visible_sudo_prompt() {
+        tail.dismissed = Some((prompt.offset, normalized_sudo_prompt_line(&prompt)));
     }
-    clear_sudo_prompt(&app, &session, &id);
+    clear_sudo_prompt(&app, &id, &mut tail);
     Ok(())
 }
 
@@ -1275,11 +1359,14 @@ pub fn write_stdin(
 ) -> Result<(), String> {
     let session = get(&sessions, &id)?;
     if data.contains('\r') || data.contains('\n') {
-        let tail = session.output_tail.lock().unwrap();
-        session
-            .sudo_consumed_before
-            .store(tail.stream_len(), Ordering::Relaxed);
-        clear_sudo_prompt(&app, &session, &id);
+        let mut tail = session.output_tail.lock().unwrap();
+        tail.consumed_line = tail
+            .active_sudo_prompt()
+            .as_ref()
+            .map(normalized_sudo_prompt_line);
+        tail.consumed_before = tail.stream_len();
+        tail.dismissed = None;
+        clear_sudo_prompt(&app, &id, &mut tail);
     }
     // tecla do usuário → registra input e limpa atenção
     *session.last_input.lock().unwrap() = Instant::now();
@@ -1319,11 +1406,7 @@ pub fn spawn_attention_monitor(app: AppHandle) {
             if settled && idle {
                 let unconsumed = {
                     let tail = session.output_tail.lock().unwrap();
-                    tail_after_consumed(
-                        &tail,
-                        session.sudo_consumed_before.load(Ordering::Relaxed),
-                    )
-                    .to_string()
+                    tail_after_consumed(&tail, tail.consumed_before).to_string()
                 };
                 // Um Enter consome tudo que já estava visível. Se um TUI não
                 // redesenhar seu prompt depois de um Enter acidental, ele não
@@ -1477,11 +1560,12 @@ fn get(sessions: &State<'_, Sessions>, id: &str) -> Result<Arc<Session>, String>
 #[cfg(test)]
 mod tests {
     use super::{
-        active_sudo_prompt, agent_binary, classify_exit_status, is_active_sudo_prompt,
-        looks_like_prompt, strip_ansi, sudo_prompt_context, sudo_prompt_state,
+        active_sudo_prompt, agent_binary, classify_exit_status, ensure_sudo_authorize_cooldown,
+        looks_like_prompt, normalized_sudo_prompt_line, strip_ansi, sudo_prompt_context,
         tail_after_consumed, ExitKind, Tail,
     };
     use portable_pty::ExitStatus;
+    use std::time::Instant;
 
     #[test]
     fn strip_ansi_preserva_multibyte() {
@@ -1524,97 +1608,105 @@ mod tests {
 
     #[test]
     fn reconhece_apenas_prompt_sudo_ativo_no_fim_da_cauda() {
-        assert!(is_active_sudo_prompt("[sudo] password for deploy:"));
-        assert!(is_active_sudo_prompt("output\n[sudo] password for deploy:   "));
-        assert!(is_active_sudo_prompt(
-            "[sudo] password for deploy:\x1b[1;1H[0] 0:bash* 12:34"
-        ));
-        assert!(!is_active_sudo_prompt(
-            "[sudo] password for deploy:\nserviço reiniciado"
-        ));
-        assert!(!is_active_sudo_prompt(
-            "[sudo] password for deploy:\rserviço reiniciado"
-        ));
-        assert!(!is_active_sudo_prompt("Password:"));
-        assert!(is_active_sudo_prompt("status apagado [sudo] password for deploy:"));
+        assert!(active_sudo_prompt("[sudo] password for deploy:", 0).is_some());
+        assert!(active_sudo_prompt("output\n[sudo] password for deploy:   ", 0).is_some());
+        assert!(active_sudo_prompt(
+            "[sudo] password for deploy:\x1b[1;1H[0] 0:bash* 12:34",
+            0
+        )
+        .is_some());
+        assert!(active_sudo_prompt("[sudo] password for deploy:\nserviço reiniciado", 0).is_none());
+        assert!(active_sudo_prompt("[sudo] password for deploy:\rserviço reiniciado", 0).is_none());
+        assert!(active_sudo_prompt("Password:", 0).is_none());
+        assert!(active_sudo_prompt("status apagado [sudo] password for deploy:", 0).is_some());
     }
 
     #[test]
     fn reconhece_prompts_sudo_localizados_do_app() {
-        assert!(is_active_sudo_prompt("[sudo] password for deploy:"));
-        assert!(is_active_sudo_prompt("[sudo] senha para deploy:"));
-        assert!(is_active_sudo_prompt("[sudo] contraseña para deploy:"));
-        assert!(is_active_sudo_prompt("[sudo] Mot de passe de deploy :"));
-        assert!(!is_active_sudo_prompt("Password:"));
+        assert!(active_sudo_prompt("[sudo] password for deploy:", 0).is_some());
+        assert!(active_sudo_prompt("[sudo] senha para deploy:", 0).is_some());
+        assert!(active_sudo_prompt("[sudo] contraseña para deploy:", 0).is_some());
+        assert!(active_sudo_prompt("[sudo] Mot de passe de deploy :", 0).is_some());
+        assert!(active_sudo_prompt("Password:", 0).is_none());
     }
 
     #[test]
-    fn indices_do_prompt_sudo_permanecem_no_buffer_original_unicode() {
+    fn offset_do_prompt_e_o_inicio_do_segmento_cru() {
         let kelvin = "\u{212a} [sudo] password for deploy:";
         let kelvin_prompt = active_sudo_prompt(kelvin, 100).unwrap();
-        assert_eq!(kelvin_prompt.start, "\u{212a} ".len());
-        assert_eq!(kelvin_prompt.offset, 100 + "\u{212a} ".len() as u64);
-        assert_eq!(&kelvin[kelvin_prompt.start..kelvin_prompt.end], "[sudo] password for deploy:");
+        assert_eq!(kelvin_prompt.start, 0);
+        assert_eq!(kelvin_prompt.offset, 100);
+        assert_eq!(kelvin_prompt.line, "[sudo] password for deploy:");
 
-        let dotted_i = "İ [sudo] senha para deploy:";
+        let dotted_i = "prefixo\rİ [sudo] senha para deploy:";
         let dotted_i_prompt = active_sudo_prompt(dotted_i, 200).unwrap();
-        assert_eq!(dotted_i_prompt.start, "İ ".len());
-        assert_eq!(dotted_i_prompt.offset, 200 + "İ ".len() as u64);
-        assert_eq!(&dotted_i[dotted_i_prompt.start..dotted_i_prompt.end], "[sudo] senha para deploy:");
+        assert_eq!(dotted_i_prompt.start, "prefixo\r".len());
+        assert_eq!(dotted_i_prompt.offset, 200 + "prefixo\r".len() as u64);
+        assert_eq!(dotted_i_prompt.line, "[sudo] senha para deploy:");
+    }
+
+    #[test]
+    fn prompt_sudo_com_escape_no_meio_do_prefixo_casa() {
+        let prompt = active_sudo_prompt("[sudo] pass\x1b[Kword for deploy:", 42).unwrap();
+        assert_eq!(prompt.offset, 42);
+        assert_eq!(prompt.line, "[sudo] password for deploy:");
     }
 
     #[test]
     fn mesmo_prompt_com_status_do_tmux_mantem_offset() {
         let mut tail = String::from("sudo systemctl restart api\n[sudo] password for deploy:");
-        let first = sudo_prompt_state(&tail, 100, 0, 0).unwrap();
+        let first = active_sudo_prompt(&tail, 100).unwrap();
 
         tail.push_str("\x1b[1;1H[0] 0:bash* 12:34");
-        let refreshed = sudo_prompt_state(&tail, 100, 0, 0).unwrap();
+        let refreshed = active_sudo_prompt(&tail, 100).unwrap();
 
         assert_eq!(first.offset, refreshed.offset);
     }
 
     #[test]
     fn retries_em_ingles_e_portugues_recebem_offsets_novos() {
-        let mut tail = String::from("sudo systemctl restart api\n[sudo] password for deploy:");
-        let first = sudo_prompt_state(&tail, 0, 0, 0).unwrap();
-        let mut consumed_before = tail.len() as u64;
-        assert!(sudo_prompt_state(&tail, 0, consumed_before, 0).is_none());
+        let mut tail = Tail::default();
+        tail.push("sudo systemctl restart api\n[sudo] password for deploy:");
+        let first = tail.visible_sudo_prompt().unwrap();
+        tail.consumed_before = tail.stream_len();
+        tail.consumed_line = Some(normalized_sudo_prompt_line(&first));
+        assert!(tail.visible_sudo_prompt().is_none());
 
-        tail.push_str("\r\nSorry, try again.\r\n[sudo] password for deploy:");
-        let english = sudo_prompt_state(&tail, 0, consumed_before, 0).unwrap();
+        tail.push("\r\nSorry, try again.\r\n[sudo] password for deploy:");
+        let english = tail.visible_sudo_prompt().unwrap();
         assert!(english.offset > first.offset);
 
-        consumed_before = tail.len() as u64;
-        tail.push_str("\r\nDesculpe, tente novamente.\r\n[sudo] senha para deploy:");
-        let portuguese = sudo_prompt_state(&tail, 0, consumed_before, 0).unwrap();
+        tail.consumed_before = tail.stream_len();
+        tail.consumed_line = Some(normalized_sudo_prompt_line(&english));
+        tail.push("\r\nDesculpe, tente novamente.\r\n[sudo] senha para deploy:");
+        let portuguese = tail.visible_sudo_prompt().unwrap();
         assert!(portuguese.offset > english.offset);
     }
 
     #[test]
-    fn enter_consumiu_prompt_atual_mas_nao_um_posterior() {
+    fn enter_consome_a_linha_e_suprime_repaint_identico() {
         let mut tail = Tail::default();
         tail.push("cmd\n[sudo] password for deploy:");
-        let current = sudo_prompt_state(&tail.buf, tail.start_offset, 0, 0).unwrap();
-        let consumed_before = tail.stream_len();
+        let current = tail.visible_sudo_prompt().unwrap();
+        tail.consumed_line = Some(normalized_sudo_prompt_line(&current));
+        tail.consumed_before = tail.stream_len();
 
-        assert!(sudo_prompt_state(&tail.buf, tail.start_offset, consumed_before, 0).is_none());
-        assert!(!looks_like_prompt(tail_after_consumed(&tail, consumed_before)));
+        assert!(tail.visible_sudo_prompt().is_none());
+        assert!(!looks_like_prompt(tail_after_consumed(&tail, tail.consumed_before)));
 
         tail.push("\r\n[sudo] password for deploy:");
-        assert!(looks_like_prompt(tail_after_consumed(&tail, consumed_before)));
-        let later = sudo_prompt_state(&tail.buf, tail.start_offset, consumed_before, 0).unwrap();
-        assert!(later.offset > current.offset);
+        assert!(looks_like_prompt(tail_after_consumed(&tail, tail.consumed_before)));
+        assert!(tail.visible_sudo_prompt().is_none());
     }
 
     #[test]
-    fn primeiro_prompt_apos_reset_tem_offset_real_nao_zero() {
+    fn primeiro_prompt_apos_reset_pode_ter_offset_zero() {
         let mut tail = Tail::default();
         tail.reset();
         tail.push("[sudo] password for deploy:");
 
-        let prompt = sudo_prompt_state(&tail.buf, tail.start_offset, 0, 0).unwrap();
-        assert_eq!(prompt.offset, 1);
+        let prompt = tail.visible_sudo_prompt().unwrap();
+        assert_eq!(prompt.offset, 0);
     }
 
     #[test]
@@ -1633,27 +1725,75 @@ mod tests {
             "{}[sudo] password for deploy:",
             "x".repeat(390)
         ));
-        let first = active_sudo_prompt(&tail.buf, tail.start_offset).unwrap();
+        let first = tail.active_sudo_prompt().unwrap();
+        tail.active = Some(first.offset);
 
         tail.push("\x1b[1;1H[0] 0:bash* 12:34");
-        let refreshed = active_sudo_prompt(&tail.buf, tail.start_offset).unwrap();
+        let refreshed = tail.active_sudo_prompt().unwrap();
 
         assert_eq!(tail.stream_len(), tail.start_offset + tail.buf.len() as u64);
         assert_eq!(first.offset, refreshed.offset);
     }
 
     #[test]
-    fn dismiss_suprime_somente_o_offset_dispensado() {
-        let mut tail = String::from("cmd\n[sudo] password for deploy:");
-        let first = sudo_prompt_state(&tail, 0, 0, 0).unwrap();
+    fn repaint_identico_apos_dismiss_nao_reemite() {
+        let mut tail = Tail::default();
+        tail.push("cmd\n[sudo] password for deploy:");
+        let first = tail.visible_sudo_prompt().unwrap();
+        tail.dismissed = Some((first.offset, normalized_sudo_prompt_line(&first)));
+        assert!(tail.visible_sudo_prompt().is_none());
 
-        assert!(sudo_prompt_state(&tail, 0, 0, first.offset).is_none());
-        tail.push_str("\x1b[1;1Hstatus");
-        assert!(sudo_prompt_state(&tail, 0, 0, first.offset).is_none());
+        tail.push("\r[sudo] password for deploy:");
+        assert!(tail.visible_sudo_prompt().is_none());
+    }
 
-        tail.push_str("\r\n[sudo] password for deploy:");
-        let second = sudo_prompt_state(&tail, 0, 0, first.offset).unwrap();
-        assert_ne!(second.offset, first.offset);
+    #[test]
+    fn repaint_identico_apos_authorize_nao_reemite() {
+        let mut tail = Tail::default();
+        tail.push("cmd\n[sudo] password for deploy:");
+        let first = tail.visible_sudo_prompt().unwrap();
+        tail.consumed_before = tail.stream_len();
+        tail.consumed_line = Some(normalized_sudo_prompt_line(&first));
+
+        tail.push("\r[sudo] password for deploy:");
+        assert!(tail.visible_sudo_prompt().is_none());
+    }
+
+    #[test]
+    fn retry_apos_authorize_reemite_prompt_identico() {
+        let mut tail = Tail::default();
+        tail.push("[sudo] password for deploy:");
+        let first = tail.visible_sudo_prompt().unwrap();
+        tail.consumed_before = tail.stream_len();
+        tail.consumed_line = Some(normalized_sudo_prompt_line(&first));
+
+        tail.push("\r\nSorry, try again.\r\n[sudo] password for deploy:");
+        assert!(tail.visible_sudo_prompt().is_some());
+    }
+
+    #[test]
+    fn refreshes_longos_mantem_segmento_do_prompt_ativo() {
+        let mut tail = Tail::default();
+        tail.push("contexto\n[sudo] password for deploy:");
+        let prompt = tail.visible_sudo_prompt().unwrap();
+        tail.active = Some(prompt.offset);
+
+        for _ in 0..10 {
+            tail.push(&format!("\x1b[1;1H{}", "s".repeat(60)));
+        }
+
+        assert!(tail.active_sudo_prompt().is_some());
+        assert!(tail.start_offset <= prompt.offset);
+    }
+
+    #[test]
+    fn cooldown_recusa_segunda_autorizacao() {
+        let mut tail = Tail::default();
+        tail.last_authorized_at = Some(Instant::now());
+        assert_eq!(
+            ensure_sudo_authorize_cooldown(&tail),
+            Err("aguarde: senha já enviada".into())
+        );
     }
 
     #[test]
@@ -1661,7 +1801,7 @@ mod tests {
         let tail = "ignorada\n\x1b[32msudo systemctl restart api\x1b[0m\n\nfalha anterior\n[sudo] password for deploy:";
         let prompt = active_sudo_prompt(tail, 0).unwrap();
         assert_eq!(
-            sudo_prompt_context(tail, prompt),
+            sudo_prompt_context(tail, &prompt),
             "sudo systemctl restart api\nfalha anterior\n[sudo] password for deploy:"
         );
     }
@@ -1678,8 +1818,8 @@ mod tests {
         );
 
         assert_eq!(
-            sudo_prompt_context(first, active_sudo_prompt(first, 0).unwrap()),
-            sudo_prompt_context(refreshed, active_sudo_prompt(refreshed, 0).unwrap())
+            sudo_prompt_context(first, &active_sudo_prompt(first, 0).unwrap()),
+            sudo_prompt_context(refreshed, &active_sudo_prompt(refreshed, 0).unwrap())
         );
     }
 

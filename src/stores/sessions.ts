@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { SessionParams } from "../lib/ipc";
+import type { SessionParams, SudoCredentialState } from "../lib/ipc";
 import type { SessionInfo, SessionStatus } from "../types";
 import { translate } from "../i18n";
 import { useLangStore } from "../i18n/lang";
@@ -43,7 +43,12 @@ interface SessionsState {
   setStatus: (id: string, status: SessionStatus, attempt?: number | null, delaySecs?: number | null) => void;
   setPtyId: (id: string, ptyId: string | null) => void;
   setAttention: (id: string, active: boolean) => void;
-  setSudoPrompt: (id: string, active: boolean, context?: string) => void;
+  setSudoPrompt: (
+    id: string,
+    active: boolean,
+    context?: string,
+    credential?: SudoCredentialState,
+  ) => void;
   /** força remontagem do Term (re-attach após detach/erro terminal) */
   reattach: (id: string) => void;
 }
@@ -73,6 +78,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
           attention: false,
           sudoPrompt: false,
           sudoContext: "",
+          sudoCredential: "none",
         },
       ],
       activeId: id,
@@ -130,11 +136,16 @@ export const useSessionsStore = create<SessionsState>((set) => ({
       ),
     })),
 
-  setSudoPrompt: (id, active, context = "") =>
+  setSudoPrompt: (id, active, context = "", credential = "none") =>
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === id
-          ? { ...x, sudoPrompt: active, sudoContext: active ? context : "" }
+          ? {
+              ...x,
+              sudoPrompt: active,
+              sudoContext: active ? context : "",
+              sudoCredential: active ? credential : "none",
+            }
           : x,
       ),
     })),
@@ -153,6 +164,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
               attention: false,
               sudoPrompt: false,
               sudoContext: "",
+              sudoCredential: "none",
             }
           : x,
       ),
