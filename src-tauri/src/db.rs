@@ -138,17 +138,6 @@ pub(crate) fn find_sudo_password_credential_for_host(
     conn: &Connection,
     host: &Host,
 ) -> rusqlite::Result<Option<String>> {
-    let mut identifiers = vec![
-        host.name.trim().to_lowercase(),
-        host.host.trim().to_lowercase(),
-    ];
-    if let Some(user) = host.user.as_deref().filter(|user| !user.trim().is_empty()) {
-        identifiers.push(format!("{}@{}", user.trim(), host.host.trim()).to_lowercase());
-    }
-    identifiers.retain(|identifier| !identifier.is_empty());
-    identifiers.sort();
-    identifiers.dedup();
-
     let mut stmt = conn.prepare(
         "SELECT id, label FROM credentials_meta
          WHERE kind = 'password'
@@ -163,16 +152,40 @@ pub(crate) fn find_sudo_password_credential_for_host(
     let candidates = rows
         .into_iter()
         .filter(|(_, label)| {
-            let label = label.trim().to_lowercase();
-            let Some(target) = label.strip_prefix("sudo · ") else {
+            let Some(target) = label.trim().strip_prefix("sudo · ") else {
                 return false;
             };
-            identifiers
-                .iter()
-                .any(|identifier| target.contains(identifier))
+            let target = target.trim();
+            let (label_user, label_host) = match target.rsplit_once('@') {
+                Some((user, target_host)) if !user.trim().is_empty() => {
+                    (Some(user.trim()), target_host.trim())
+                }
+                _ => (None, target),
+            };
+            let label_host_folded = label_host.to_lowercase();
+            if label_host.is_empty()
+                || !(label_host_folded == host.host.trim().to_lowercase()
+                    || label_host_folded == host.name.trim().to_lowercase())
+            {
+                return false;
+            }
+            match (label_user, host.user.as_deref()) {
+                (Some(label_user), Some(host_user)) if !host_user.trim().is_empty() => {
+                    label_user == host_user.trim()
+                }
+                _ => true,
+            }
         })
         .map(|(id, _)| id)
         .collect::<Vec<_>>();
+
+    if candidates.len() > 1 {
+        eprintln!(
+            "[db] {} credenciais sudo correspondem exatamente ao host {}",
+            candidates.len(),
+            host.id
+        );
+    }
 
     Ok(match candidates.as_slice() {
         [id] => Some(id.clone()),
@@ -426,5 +439,50 @@ mod tests {
         )
         .unwrap();
         assert_eq!(find_sudo_password_credential_for_host(&conn, &host).unwrap(), None);
+    }
+
+    #[test]
+    fn credencial_sudo_exige_host_exato_e_usuario_compativel() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO credentials_meta (id, kind, label, scope, has_secret) VALUES
+                ('ip-long', 'password', 'sudo · deploy@10.4.2.18', 'sudo', 1),
+                ('api-prod', 'password', 'sudo · deploy@api-prod', 'sudo', 1),
+                ('wrong-user', 'password', 'sudo · root@api', 'sudo', 1);",
+        )
+        .unwrap();
+        let mut host = Host {
+            id: "host-api".into(),
+            name: "api".into(),
+            group: String::new(),
+            user: Some("deploy".into()),
+            host: "10.4.2.1".into(),
+            port: None,
+            credential_ref: None,
+            vpn_profile: None,
+            auto_reconnect: true,
+            auto_install_tmux: false,
+            auto_attach: true,
+            project_dir: None,
+            startup_mode: "shell".into(),
+        };
+
+        assert_eq!(find_sudo_password_credential_for_host(&conn, &host).unwrap(), None);
+
+        host.host = "api".into();
+        host.name = "API".into();
+        assert_eq!(find_sudo_password_credential_for_host(&conn, &host).unwrap(), None);
+
+        conn.execute(
+            "INSERT INTO credentials_meta (id, kind, label, scope, has_secret)
+             VALUES ('api-exact', 'password', 'sudo · deploy@ApI', 'sudo', 1)",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            find_sudo_password_credential_for_host(&conn, &host).unwrap(),
+            Some("api-exact".into())
+        );
     }
 }

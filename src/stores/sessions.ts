@@ -3,6 +3,8 @@ import type { SessionParams } from "../lib/ipc";
 import type { SessionInfo, SessionStatus } from "../types";
 import { translate } from "../i18n";
 import { useLangStore } from "../i18n/lang";
+import { useHostsStore } from "./hosts";
+import { useUiStore } from "./ui";
 
 /** contador monotônico p/ dar id estável a cada linha de log (key do React) */
 let logSeq = 0;
@@ -54,6 +56,10 @@ export const useSessionsStore = create<SessionsState>((set) => ({
 
   open: (hostId, params) => {
     const id = crypto.randomUUID();
+    const host = useHostsStore.getState().hosts.find((candidate) => candidate.id === hostId);
+    const effectiveParams = params ?? (host?.startupMode === "clmux"
+      ? { mode: "clmux" as const, agent: useUiStore.getState().defaultAgent }
+      : undefined);
     set((s) => ({
       sessions: [
         ...s.sessions,
@@ -66,7 +72,8 @@ export const useSessionsStore = create<SessionsState>((set) => ({
           ptyId: null,
           generation: 0,
           log: [],
-          params: params ?? null,
+          // Persistido na SessionInfo e reutilizado pelo TermHost em reattach/reconnect.
+          params: effectiveParams ?? null,
           attention: false,
           sudoPrompt: false,
           sudoContext: "",

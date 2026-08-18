@@ -1586,6 +1586,16 @@
   font: 9.5px var(--font-mono);
   white-space: nowrap;
 }
+.hxm__agent-check {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: 9.5px var(--font-ui);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.hxm__agent-check:disabled { cursor: wait; opacity: 0.65; }
 .hxm__host-pick {
   display: flex;
   align-items: center;

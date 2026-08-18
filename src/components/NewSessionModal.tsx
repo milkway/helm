@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { detectRemote, type RemoteInfo } from "../lib/ipc";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
@@ -23,22 +23,30 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
   const [mode, setMode] = useState<Mode>("clmux");
   const [agent, setAgent] = useState<Agent>(defaultAgent);
   const [rememberAgent, setRememberAgent] = useState(false);
-  const [remoteInfo, setRemoteInfo] = useState<RemoteInfo | null>(null);
+  const [remoteInfoByHost, setRemoteInfoByHost] = useState<Record<string, RemoteInfo>>({});
+  const [probingHostId, setProbingHostId] = useState<string | null>(null);
+  const [probeErrorHostId, setProbeErrorHostId] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    setRemoteInfo(null);
-    if (!hostId || mode !== "clmux") return;
-    void detectRemote(hostId)
+  const probeRemote = () => {
+    if (!hostId || probingHostId === hostId || remoteInfoByHost[hostId]) return;
+    const targetHostId = hostId;
+    setProbingHostId(targetHostId);
+    setProbeErrorHostId(null);
+    void detectRemote(targetHostId)
       .then((info) => {
-        if (!cancelled) setRemoteInfo(info);
+        setRemoteInfoByHost((current) => ({ ...current, [targetHostId]: info }));
       })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [hostId, mode]);
+      .catch(() => setProbeErrorHostId(targetHostId))
+      .finally(() => {
+        setProbingHostId((current) => current === targetHostId ? null : current);
+      });
+  };
 
   const host = hosts.find((h) => h.id === hostId);
   const hostSession = sessions.find((s) => s.hostId === hostId);
+  const remoteInfo = remoteInfoByHost[hostId] ?? null;
+  const probing = probingHostId === hostId;
+  const probeFailed = probeErrorHostId === hostId;
   const sessionName = tmuxSessionName(project.trim() || host?.name || "helm");
   const valid = !!host;
 
@@ -156,12 +164,14 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
                         onClick={(e) => {
                           e.stopPropagation();
                           setMode("clmux");
+                          probeRemote();
                         }}
                       >
                         <select
                           className="hxm__agent-select"
                           value={agent}
                           aria-label={t("ns.agent")}
+                          onFocus={probeRemote}
                           onChange={(e) => {
                             setAgent(e.target.value as Agent);
                             setMode("clmux");
@@ -173,6 +183,21 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
                         {remoteInfo && !remoteInfo[agent] && (
                           <span className="hxm__agent-missing">{t("ns.notDetected")}</span>
                         )}
+                        {probeFailed && !remoteInfo && (
+                          <span className="hxm__agent-missing">{t("ns.checkFailed")}</span>
+                        )}
+                        <button
+                          type="button"
+                          className="hxm__agent-check"
+                          disabled={probing}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMode("clmux");
+                            probeRemote();
+                          }}
+                        >
+                          {probing ? t("ns.checkingHost") : t("ns.checkHost")}
+                        </button>
                       </div>
                     )}
                     {m.badge && <span className="hxm__badge hxm__badge--amber">{m.badge}</span>}

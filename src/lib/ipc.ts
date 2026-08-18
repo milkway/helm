@@ -56,6 +56,9 @@ export function detectRemote(hostId: string): Promise<RemoteInfo> {
 
   const promise = invoke<RemoteInfo>("detect_remote", { hostId });
   remoteInfoCache.set(hostId, { expiresAt: now + REMOTE_INFO_TTL_MS, promise });
+  void promise.catch(() => {
+    if (remoteInfoCache.get(hostId)?.promise === promise) remoteInfoCache.delete(hostId);
+  });
   return promise;
 }
 
