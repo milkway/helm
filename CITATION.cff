@@ -8,7 +8,7 @@ authors:
     # orcid: "https://orcid.org/0000-0000-0000-0000"   # descomente e preencha se tiver
 repository-code: "https://github.com/milkway/helm"
 url: "https://github.com/milkway/helm"
-doi: "10.5281/zenodo.21979394"
+doi: "10.5281/zenodo.21996407"
 identifiers:
   - type: doi
     value: "10.5281/zenodo.21303522"
