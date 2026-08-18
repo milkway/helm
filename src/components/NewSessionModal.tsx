@@ -27,12 +27,16 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
   const [probingHostId, setProbingHostId] = useState<string | null>(null);
   const [probeErrorHostId, setProbeErrorHostId] = useState<string | null>(null);
   const currentHostId = useRef(hostId);
+  const probeRequestId = useRef(0);
+  const latestProbeRequestByHost = useRef(new Map<string, number>());
   currentHostId.current = hostId;
 
   const probeRemote = (force = false) => {
     if (!hostId || probingHostId === hostId) return;
     if (!force && remoteInfo?.hostId === hostId) return;
     const targetHostId = hostId;
+    const requestId = ++probeRequestId.current;
+    latestProbeRequestByHost.current.set(targetHostId, requestId);
     if (force) {
       invalidateRemoteInfo(targetHostId);
       setRemoteInfo(null);
@@ -41,15 +45,25 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
     setProbeErrorHostId(null);
     void detectRemote(targetHostId)
       .then((info) => {
-        if (currentHostId.current === targetHostId) {
+        if (
+          latestProbeRequestByHost.current.get(targetHostId) === requestId &&
+          currentHostId.current === targetHostId
+        ) {
           setRemoteInfo({ hostId: targetHostId, info });
         }
       })
       .catch(() => {
-        if (currentHostId.current === targetHostId) setProbeErrorHostId(targetHostId);
+        if (
+          latestProbeRequestByHost.current.get(targetHostId) === requestId &&
+          currentHostId.current === targetHostId
+        ) {
+          setProbeErrorHostId(targetHostId);
+        }
       })
       .finally(() => {
-        setProbingHostId((current) => current === targetHostId ? null : current);
+        if (latestProbeRequestByHost.current.get(targetHostId) === requestId) {
+          setProbingHostId((current) => current === targetHostId ? null : current);
+        }
       });
   };
 

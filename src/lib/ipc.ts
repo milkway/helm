@@ -84,8 +84,8 @@ export function writeStdin(id: string, data: string): Promise<void> {
   return invoke("write_stdin", { id, data });
 }
 
-export function authorizeSudo(id: string): Promise<void> {
-  return invoke("authorize_sudo", { id });
+export function authorizeSudo(id: string, promptToken: number): Promise<void> {
+  return invoke("authorize_sudo", { id, promptToken });
 }
 
 export function dismissSudoPrompt(id: string): Promise<void> {
@@ -264,6 +264,7 @@ export interface SudoPromptPayload {
   active: boolean;
   context: string;
   credential: SudoCredentialState;
+  promptToken: number | null;
 }
 
 export type SudoCredentialState = "none" | "unmatched" | "ok";

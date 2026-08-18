@@ -170,7 +170,8 @@ fn matching_sudo_password_credentials(
                 (Some(label_user), Some(host_user)) if !host_user.trim().is_empty() => {
                     label_user == host_user.trim()
                 }
-                _ => true,
+                (Some(_), _) => false,
+                (None, _) => true,
             }
         })
         .map(|(id, _)| id.clone())
@@ -367,8 +368,8 @@ pub fn delete_host(db: State<'_, Db>, id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        has_ssh_password_credential, migrate, resolve_sudo_password_credential,
-        sudo_password_credentials, Host, MIGRATIONS,
+        has_ssh_password_credential, matching_sudo_password_credentials, migrate,
+        resolve_sudo_password_credential, sudo_password_credentials, Host, MIGRATIONS,
     };
     use rusqlite::Connection;
 
@@ -575,6 +576,40 @@ mod tests {
 
         host.host = "other".into();
         assert_eq!(resolve_sudo_password_credential(&host, &eligible), (None, true));
+    }
+
+    #[test]
+    fn alias_sem_usuario_nao_casa_com_label_que_especifica_usuario() {
+        let eligible = vec![
+            ("root".into(), "sudo · root@produção".into()),
+            ("host-only".into(), "sudo · produção".into()),
+        ];
+        let mut host = Host {
+            id: "host-production".into(),
+            name: "Produção".into(),
+            group: String::new(),
+            user: None,
+            host: "prod-alias".into(),
+            port: None,
+            credential_ref: None,
+            vpn_profile: None,
+            auto_reconnect: true,
+            auto_install_tmux: false,
+            auto_attach: true,
+            project_dir: None,
+            startup_mode: "shell".into(),
+        };
+
+        assert_eq!(
+            matching_sudo_password_credentials(&host, &eligible),
+            vec!["host-only".to_string()]
+        );
+
+        host.user = Some("  ".into());
+        assert_eq!(
+            matching_sudo_password_credentials(&host, &eligible),
+            vec!["host-only".to_string()]
+        );
     }
 
     #[test]

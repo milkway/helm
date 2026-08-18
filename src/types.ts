@@ -51,6 +51,8 @@ export interface SessionInfo {
   attention: boolean;
   /** sudo aguarda autorização explícita para usar a credencial do cofre */
   sudoPrompt: boolean;
+  /** offset que vincula a autorização ao prompt publicado pelo backend */
+  sudoPromptToken: number | null;
   /** últimas linhas sem ANSI que contextualizam o prompt detectado */
   sudoContext: string;
   /** disponibilidade da credencial sudo correspondente ao host */

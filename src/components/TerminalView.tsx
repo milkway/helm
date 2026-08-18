@@ -140,10 +140,10 @@ function SudoToast({ session }: { session: SessionInfo }) {
   useEffect(() => {
     setConfirming(false);
     setError(null);
-  }, [session.sudoContext, session.sudoCredential]);
+  }, [session.sudoContext, session.sudoCredential, session.sudoPromptToken]);
 
   const authorize = async () => {
-    if (!session.ptyId || busy) return;
+    if (!session.ptyId || session.sudoPromptToken === null || busy) return;
     if (!confirming) {
       setConfirming(true);
       return;
@@ -156,8 +156,7 @@ function SudoToast({ session }: { session: SessionInfo }) {
         setError(t("sudo.unlockError"));
         return;
       }
-      await authorizeSudo(session.ptyId);
-      setSudoPrompt(session.id, false);
+      await authorizeSudo(session.ptyId, session.sudoPromptToken);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       if (message.startsWith("PROMPT_CHANGED:")) {

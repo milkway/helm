@@ -8,7 +8,7 @@ const { invokeMock, listenMock } = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: listenMock }));
 
-import { base64ToBytes, detectRemote, invalidateRemoteInfo } from "./ipc";
+import { authorizeSudo, base64ToBytes, detectRemote, invalidateRemoteInfo } from "./ipc";
 
 describe("base64ToBytes", () => {
   it("decodes binary data without treating it as text", () => {
@@ -16,15 +16,29 @@ describe("base64ToBytes", () => {
   });
 });
 
+describe("authorizeSudo", () => {
+  it("forwards the prompt token seen by the user", async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+
+    await authorizeSudo("pty-1", 42);
+
+    expect(invokeMock).toHaveBeenLastCalledWith("authorize_sudo", {
+      id: "pty-1",
+      promptToken: 42,
+    });
+  });
+});
+
 describe("detectRemote", () => {
   it("evicts rejected probes instead of caching the failure", async () => {
+    const before = invokeMock.mock.calls.length;
     invokeMock
       .mockRejectedValueOnce(new Error("VPN offline"))
       .mockResolvedValueOnce({ os: "Linux", pkgManager: null, tmux: null, claude: null, codex: null });
 
     await expect(detectRemote("host-retry-after-failure")).rejects.toThrow("VPN offline");
     await expect(detectRemote("host-retry-after-failure")).resolves.toMatchObject({ os: "Linux" });
-    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock.mock.calls.length).toBe(before + 2);
   });
 
   it("allows a manual probe to invalidate a successful cached result", async () => {

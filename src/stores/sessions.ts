@@ -48,6 +48,7 @@ interface SessionsState {
     active: boolean,
     context?: string,
     credential?: SudoCredentialState,
+    promptToken?: number | null,
   ) => void;
   /** força remontagem do Term (re-attach após detach/erro terminal) */
   reattach: (id: string) => void;
@@ -77,6 +78,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
           params: params ?? null,
           attention: false,
           sudoPrompt: false,
+          sudoPromptToken: null,
           sudoContext: "",
           sudoCredential: "none",
         },
@@ -136,13 +138,14 @@ export const useSessionsStore = create<SessionsState>((set) => ({
       ),
     })),
 
-  setSudoPrompt: (id, active, context = "", credential = "none") =>
+  setSudoPrompt: (id, active, context = "", credential = "none", promptToken = null) =>
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === id
           ? {
               ...x,
               sudoPrompt: active,
+              sudoPromptToken: active ? promptToken : null,
               sudoContext: active ? context : "",
               sudoCredential: active ? credential : "none",
             }
@@ -163,6 +166,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
               log: x.log,
               attention: false,
               sudoPrompt: false,
+              sudoPromptToken: null,
               sudoContext: "",
               sudoCredential: "none",
             }
