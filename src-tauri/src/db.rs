@@ -117,6 +117,7 @@ pub(crate) fn has_ssh_password_credential(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn has_sudo_password_credential(
     conn: &Connection,
     id: &str,
@@ -134,6 +135,7 @@ pub(crate) fn has_sudo_password_credential(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn find_sudo_password_credential_for_host(
     conn: &Connection,
     host: &Host,
@@ -154,6 +156,7 @@ pub(crate) fn find_sudo_password_credential_for_host(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn has_unmatched_sudo_password_credential_for_host(
     conn: &Connection,
     host: &Host,
@@ -162,6 +165,7 @@ pub(crate) fn has_unmatched_sudo_password_credential_for_host(
     Ok(eligible_count > 0 && candidates.is_empty())
 }
 
+#[cfg(test)]
 fn sudo_password_credential_candidates_for_host(
     conn: &Connection,
     host: &Host,
