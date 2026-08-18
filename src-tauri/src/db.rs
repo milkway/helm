@@ -138,6 +138,34 @@ pub(crate) fn find_sudo_password_credential_for_host(
     conn: &Connection,
     host: &Host,
 ) -> rusqlite::Result<Option<String>> {
+    let (_, candidates) = sudo_password_credential_candidates_for_host(conn, host)?;
+
+    if candidates.len() > 1 {
+        eprintln!(
+            "[db] {} credenciais sudo correspondem exatamente ao host {}",
+            candidates.len(),
+            host.id
+        );
+    }
+
+    Ok(match candidates.as_slice() {
+        [id] => Some(id.clone()),
+        _ => None,
+    })
+}
+
+pub(crate) fn has_unmatched_sudo_password_credential_for_host(
+    conn: &Connection,
+    host: &Host,
+) -> rusqlite::Result<bool> {
+    let (eligible_count, candidates) = sudo_password_credential_candidates_for_host(conn, host)?;
+    Ok(eligible_count > 0 && candidates.is_empty())
+}
+
+fn sudo_password_credential_candidates_for_host(
+    conn: &Connection,
+    host: &Host,
+) -> rusqlite::Result<(usize, Vec<String>)> {
     let mut stmt = conn.prepare(
         "SELECT id, label FROM credentials_meta
          WHERE kind = 'password'
@@ -149,6 +177,7 @@ pub(crate) fn find_sudo_password_credential_for_host(
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    let eligible_count = rows.len();
     let candidates = rows
         .into_iter()
         .filter(|(_, label)| {
@@ -163,9 +192,15 @@ pub(crate) fn find_sudo_password_credential_for_host(
                 _ => (None, target),
             };
             let label_host_folded = label_host.to_lowercase();
+            let label_hostname_folded = label_hostname_without_port(label_host).to_lowercase();
+            let host_address_folded = host.host.trim().to_lowercase();
+            let host_name_folded = host.name.trim().to_lowercase();
+            let host_matches = label_host_folded == host_address_folded
+                || label_host_folded == host_name_folded
+                || label_hostname_folded == host_address_folded
+                || label_hostname_folded == host_name_folded;
             if label_host.is_empty()
-                || !(label_host_folded == host.host.trim().to_lowercase()
-                    || label_host_folded == host.name.trim().to_lowercase())
+                || !host_matches
             {
                 return false;
             }
@@ -179,18 +214,22 @@ pub(crate) fn find_sudo_password_credential_for_host(
         .map(|(id, _)| id)
         .collect::<Vec<_>>();
 
-    if candidates.len() > 1 {
-        eprintln!(
-            "[db] {} credenciais sudo correspondem exatamente ao host {}",
-            candidates.len(),
-            host.id
-        );
-    }
+    Ok((eligible_count, candidates))
+}
 
-    Ok(match candidates.as_slice() {
-        [id] => Some(id.clone()),
-        _ => None,
-    })
+fn label_hostname_without_port(host: &str) -> &str {
+    if let Some(bracketed) = host.strip_prefix('[') {
+        if let Some((hostname, port)) = bracketed.rsplit_once("]:") {
+            if port.parse::<u16>().is_ok() {
+                return hostname;
+            }
+        }
+    }
+    match host.rsplit_once(':') {
+        Some((hostname, port))
+            if !hostname.contains(':') && port.parse::<u16>().is_ok() => hostname,
+        _ => host,
+    }
 }
 
 #[tauri::command]
@@ -321,7 +360,8 @@ pub fn delete_host(db: State<'_, Db>, id: String) -> Result<(), String> {
 mod tests {
     use super::{
         find_sudo_password_credential_for_host, has_ssh_password_credential,
-        has_sudo_password_credential, migrate, Host, MIGRATIONS,
+        has_sudo_password_credential, has_unmatched_sudo_password_credential_for_host, migrate,
+        Host, MIGRATIONS,
     };
     use rusqlite::Connection;
 
@@ -484,5 +524,40 @@ mod tests {
             find_sudo_password_credential_for_host(&conn, &host).unwrap(),
             Some("api-exact".into())
         );
+    }
+
+    #[test]
+    fn credencial_sudo_aceita_hostname_do_label_sem_porta() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO credentials_meta (id, kind, label, scope, has_secret) VALUES
+                ('api-port', 'password', 'sudo · deploy@api:22', 'sudo', 1);",
+        )
+        .unwrap();
+        let mut host = Host {
+            id: "host-api".into(),
+            name: "produção".into(),
+            group: String::new(),
+            user: Some("deploy".into()),
+            host: "api".into(),
+            port: Some(22),
+            credential_ref: None,
+            vpn_profile: None,
+            auto_reconnect: true,
+            auto_install_tmux: false,
+            auto_attach: true,
+            project_dir: None,
+            startup_mode: "shell".into(),
+        };
+
+        assert_eq!(
+            find_sudo_password_credential_for_host(&conn, &host).unwrap(),
+            Some("api-port".into())
+        );
+        assert!(!has_unmatched_sudo_password_credential_for_host(&conn, &host).unwrap());
+
+        host.host = "other".into();
+        assert!(has_unmatched_sudo_password_credential_for_host(&conn, &host).unwrap());
     }
 }

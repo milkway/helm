@@ -62,7 +62,7 @@ export function detectRemote(hostId: string): Promise<RemoteInfo> {
   return promise;
 }
 
-function invalidateRemoteInfo(hostId: string): void {
+export function invalidateRemoteInfo(hostId: string): void {
   remoteInfoCache.delete(hostId);
 }
 
