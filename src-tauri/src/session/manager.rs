@@ -290,6 +290,7 @@ fn active_sudo_prompt(tail: &str, start_offset: u64) -> Option<SudoPromptMatch> 
 /// de terminal podem redesenhar sem LF. O prompt precisa estar no último
 /// segmento não-vazio; texto colado depois de `:` por CUP (status do tmux) é
 /// tolerado, mas qualquer output em uma linha/segmento posterior o invalida.
+#[cfg(test)]
 fn is_active_sudo_prompt(tail: &str) -> bool {
     active_sudo_prompt(tail, 0).is_some()
 }
