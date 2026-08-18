@@ -56,6 +56,7 @@ struct Io {
     killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
 }
 
+#[derive(Default)]
 struct Tail {
     buf: String,
     start_offset: u64,
@@ -64,20 +65,6 @@ struct Tail {
     active: Option<u64>,
     consumed_line: Option<String>,
     last_authorized_at: Option<Instant>,
-}
-
-impl Default for Tail {
-    fn default() -> Self {
-        Self {
-            buf: String::new(),
-            start_offset: 0,
-            consumed_before: 0,
-            dismissed: None,
-            active: None,
-            consumed_line: None,
-            last_authorized_at: None,
-        }
-    }
 }
 
 impl Tail {
@@ -1788,8 +1775,7 @@ mod tests {
 
     #[test]
     fn cooldown_recusa_segunda_autorizacao() {
-        let mut tail = Tail::default();
-        tail.last_authorized_at = Some(Instant::now());
+        let tail = Tail { last_authorized_at: Some(Instant::now()), ..Default::default() };
         assert_eq!(
             ensure_sudo_authorize_cooldown(&tail),
             Err("aguarde: senha já enviada".into())
