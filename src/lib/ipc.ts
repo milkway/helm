@@ -56,10 +56,13 @@ export function detectRemote(hostId: string): Promise<RemoteInfo> {
 
   const promise = invoke<RemoteInfo>("detect_remote", { hostId });
   remoteInfoCache.set(hostId, { expiresAt: now + REMOTE_INFO_TTL_MS, promise });
+  void promise.catch(() => {
+    if (remoteInfoCache.get(hostId)?.promise === promise) remoteInfoCache.delete(hostId);
+  });
   return promise;
 }
 
-function invalidateRemoteInfo(hostId: string): void {
+export function invalidateRemoteInfo(hostId: string): void {
   remoteInfoCache.delete(hostId);
 }
 
@@ -81,8 +84,8 @@ export function writeStdin(id: string, data: string): Promise<void> {
   return invoke("write_stdin", { id, data });
 }
 
-export function authorizeSudo(id: string): Promise<void> {
-  return invoke("authorize_sudo", { id });
+export function authorizeSudo(id: string, promptToken: number): Promise<void> {
+  return invoke("authorize_sudo", { id, promptToken });
 }
 
 export function dismissSudoPrompt(id: string): Promise<void> {
@@ -260,7 +263,11 @@ export interface SudoPromptPayload {
   id: string;
   active: boolean;
   context: string;
+  credential: SudoCredentialState;
+  promptToken: number | null;
 }
+
+export type SudoCredentialState = "none" | "unmatched" | "ok";
 
 export function onSudoPrompt(
   handler: (payload: SudoPromptPayload) => void,

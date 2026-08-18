@@ -474,7 +474,15 @@ async function createEntry(
 
   disposers.push(
     addSessionHandler(sudoPromptHandlers, ptyId, (payload) => {
-      useSessionsStore.getState().setSudoPrompt(uiId, payload.active, payload.context);
+      useSessionsStore
+        .getState()
+        .setSudoPrompt(
+          uiId,
+          payload.active,
+          payload.context,
+          payload.credential,
+          payload.promptToken,
+        );
     }),
   );
 

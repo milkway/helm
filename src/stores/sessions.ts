@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { SessionParams } from "../lib/ipc";
+import type { SessionParams, SudoCredentialState } from "../lib/ipc";
 import type { SessionInfo, SessionStatus } from "../types";
 import { translate } from "../i18n";
 import { useLangStore } from "../i18n/lang";
@@ -43,7 +43,13 @@ interface SessionsState {
   setStatus: (id: string, status: SessionStatus, attempt?: number | null, delaySecs?: number | null) => void;
   setPtyId: (id: string, ptyId: string | null) => void;
   setAttention: (id: string, active: boolean) => void;
-  setSudoPrompt: (id: string, active: boolean, context?: string) => void;
+  setSudoPrompt: (
+    id: string,
+    active: boolean,
+    context?: string,
+    credential?: SudoCredentialState,
+    promptToken?: number | null,
+  ) => void;
   /** força remontagem do Term (re-attach após detach/erro terminal) */
   reattach: (id: string) => void;
 }
@@ -66,10 +72,15 @@ export const useSessionsStore = create<SessionsState>((set) => ({
           ptyId: null,
           generation: 0,
           log: [],
+          // Persistido na SessionInfo e reutilizado pelo TermHost em reattach/reconnect.
+          // Ausência de override continua sendo ausência: o Rust relê os
+          // defaults do host/agente em cada abertura ou reattach.
           params: params ?? null,
           attention: false,
           sudoPrompt: false,
+          sudoPromptToken: null,
           sudoContext: "",
+          sudoCredential: "none",
         },
       ],
       activeId: id,
@@ -127,11 +138,17 @@ export const useSessionsStore = create<SessionsState>((set) => ({
       ),
     })),
 
-  setSudoPrompt: (id, active, context = "") =>
+  setSudoPrompt: (id, active, context = "", credential = "none", promptToken = null) =>
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === id
-          ? { ...x, sudoPrompt: active, sudoContext: active ? context : "" }
+          ? {
+              ...x,
+              sudoPrompt: active,
+              sudoPromptToken: active ? promptToken : null,
+              sudoContext: active ? context : "",
+              sudoCredential: active ? credential : "none",
+            }
           : x,
       ),
     })),
@@ -149,7 +166,9 @@ export const useSessionsStore = create<SessionsState>((set) => ({
               log: x.log,
               attention: false,
               sudoPrompt: false,
+              sudoPromptToken: null,
               sudoContext: "",
+              sudoCredential: "none",
             }
           : x,
       ),

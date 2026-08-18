@@ -140,10 +140,10 @@ function SudoToast({ session }: { session: SessionInfo }) {
   useEffect(() => {
     setConfirming(false);
     setError(null);
-  }, [session.sudoContext]);
+  }, [session.sudoContext, session.sudoCredential, session.sudoPromptToken]);
 
   const authorize = async () => {
-    if (!session.ptyId || busy) return;
+    if (!session.ptyId || session.sudoPromptToken === null || busy) return;
     if (!confirming) {
       setConfirming(true);
       return;
@@ -156,10 +156,15 @@ function SudoToast({ session }: { session: SessionInfo }) {
         setError(t("sudo.unlockError"));
         return;
       }
-      await authorizeSudo(session.ptyId);
-      setSudoPrompt(session.id, false);
-    } catch {
-      setError(t("sudo.error"));
+      await authorizeSudo(session.ptyId, session.sudoPromptToken);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      if (message.startsWith("PROMPT_CHANGED:")) {
+        setConfirming(false);
+        setError(null);
+      } else {
+        setError(t("sudo.error"));
+      }
     } finally {
       setBusy(false);
     }
@@ -175,22 +180,28 @@ function SudoToast({ session }: { session: SessionInfo }) {
       <span className="sudo-toast__icon">#</span>
       <div className="sudo-toast__body">
         <div className="sudo-toast__title">{t("sudo.title")}</div>
-        <div className="sudo-toast__sub">{t("sudo.warning")}</div>
+        <div className="sudo-toast__sub">
+          {session.sudoCredential === "unmatched"
+            ? t("sudo.unmatchedCredential")
+            : t("sudo.warning")}
+        </div>
         {error && <div className="sudo-toast__sub sudo-toast__sub--error">{error}</div>}
         <div className="sudo-toast__context">{session.sudoContext}</div>
       </div>
-      <button
-        type="button"
-        className="sudo-toast__authorize"
-        disabled={busy}
-        onClick={() => void authorize()}
-      >
-        {busy
-          ? t("sudo.authorizing")
-          : confirming
-            ? t("sudo.confirm")
-            : t("sudo.authorize")}
-      </button>
+      {session.sudoCredential === "ok" && (
+        <button
+          type="button"
+          className="sudo-toast__authorize"
+          disabled={busy}
+          onClick={() => void authorize()}
+        >
+          {busy
+            ? t("sudo.authorizing")
+            : confirming
+              ? t("sudo.confirm")
+              : t("sudo.authorize")}
+        </button>
+      )}
       <button
         type="button"
         className="sudo-toast__close"
