@@ -166,6 +166,16 @@ fn sudo_password_credential_candidates_for_host(
     conn: &Connection,
     host: &Host,
 ) -> rusqlite::Result<(usize, Vec<String>)> {
+    let eligible = sudo_password_credentials(conn)?;
+    let candidates = matching_sudo_password_credentials(host, &eligible);
+    Ok((eligible.len(), candidates))
+}
+
+pub(crate) type SudoPasswordCredential = (String, String);
+
+fn sudo_password_credentials(
+    conn: &Connection,
+) -> rusqlite::Result<Vec<SudoPasswordCredential>> {
     let mut stmt = conn.prepare(
         "SELECT id, label FROM credentials_meta
          WHERE kind = 'password'
@@ -177,9 +187,15 @@ fn sudo_password_credential_candidates_for_host(
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let eligible_count = rows.len();
-    let candidates = rows
-        .into_iter()
+    Ok(rows)
+}
+
+fn matching_sudo_password_credentials(
+    host: &Host,
+    eligible: &[SudoPasswordCredential],
+) -> Vec<String> {
+    eligible
+        .iter()
         .filter(|(_, label)| {
             let Some(target) = label.trim().strip_prefix("sudo · ") else {
                 return false;
@@ -211,10 +227,56 @@ fn sudo_password_credential_candidates_for_host(
                 _ => true,
             }
         })
-        .map(|(id, _)| id)
-        .collect::<Vec<_>>();
+        .map(|(id, _)| id.clone())
+        .collect()
+}
 
-    Ok((eligible_count, candidates))
+/// Recarrega host e credenciais sudo elegíveis sob uma única aquisição do DB.
+/// O chamador deriva tanto a credencial única quanto o caso de label divergente
+/// desta mesma fotografia, sem repetir o SELECT de `credentials_meta`.
+pub(crate) fn get_host_and_sudo_password_credentials(
+    db: &State<'_, Db>,
+    id: &str,
+) -> Result<(Host, Vec<SudoPasswordCredential>), String> {
+    let conn = db.0.lock().unwrap();
+    let host = conn
+        .query_row(
+            "SELECT id, name, \"group\", user, host, port, credential_ref, vpn_profile,
+                    auto_reconnect, auto_install_tmux, auto_attach, project_dir, startup_mode
+             FROM hosts WHERE id = ?1",
+            [id],
+            row_to_host,
+        )
+        .map_err(|e| format!("host {id}: {e}"))?;
+    let candidates = sudo_password_credentials(&conn).map_err(|e| e.to_string())?;
+    Ok((host, candidates))
+}
+
+pub(crate) fn resolve_sudo_password_credential(
+    host: &Host,
+    eligible: &[SudoPasswordCredential],
+) -> (Option<String>, bool) {
+    if let Some(credential_id) = host.credential_ref.as_deref() {
+        if eligible.iter().any(|(id, _)| id == credential_id) {
+            return (Some(credential_id.to_string()), false);
+        }
+    }
+
+    let candidates = matching_sudo_password_credentials(host, eligible);
+    if candidates.len() > 1 {
+        eprintln!(
+            "[db] {} credenciais sudo correspondem exatamente ao host {}",
+            candidates.len(),
+            host.id
+        );
+    }
+    let credential_id = match candidates.as_slice() {
+        [id] => Some(id.clone()),
+        _ => None,
+    };
+    let unmatched_exists = !eligible.is_empty() && candidates.is_empty();
+
+    (credential_id, unmatched_exists)
 }
 
 fn label_hostname_without_port(host: &str) -> &str {

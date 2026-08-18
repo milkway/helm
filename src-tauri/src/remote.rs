@@ -239,7 +239,9 @@ pub struct RemoteInfo {
     pub codex: Option<String>,
 }
 
-const DETECT_SCRIPT: &str = r#"export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$PATH"; for d in $(command ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null); do PATH="$d:$PATH"; done; export PATH; . /etc/os-release 2>/dev/null; echo "OS=${PRETTY_NAME:-$(uname -s)}"; tmux -V 2>/dev/null | sed 's/^/TMUX=/'; command -v claude 2>/dev/null | sed 's/^/CLAUDE=/'; command -v codex 2>/dev/null | sed 's/^/CODEX=/'; for pm in apt-get dnf yum pacman apk zypper; do command -v $pm >/dev/null 2>&1 && { echo "PM=$pm"; break; }; done"#;
+// Em zsh, `nonomatch` deixa um glob sem resultados passar como literal para
+// que `[ -d ]` o filtre; em bash, `setopt` falha silenciosamente e é um no-op.
+const DETECT_SCRIPT: &str = r#"setopt nonomatch >/dev/null 2>&1; export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$PATH"; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && PATH="$d:$PATH"; done; export PATH; . /etc/os-release 2>/dev/null; echo "OS=${PRETTY_NAME:-$(uname -s)}"; tmux -V 2>/dev/null | sed 's/^/TMUX=/'; command -v claude 2>/dev/null | sed 's/^/CLAUDE=/'; command -v codex 2>/dev/null | sed 's/^/CODEX=/'; for pm in apt-get dnf yum pacman apk zypper; do command -v $pm >/dev/null 2>&1 && { echo "PM=$pm"; break; }; done"#;
 
 #[tauri::command]
 pub async fn detect_remote(db: State<'_, Db>, host_id: String) -> Result<RemoteInfo, String> {

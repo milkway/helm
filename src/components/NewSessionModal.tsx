@@ -200,6 +200,11 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
                         {currentRemoteInfo && !currentRemoteInfo[agent] && (
                           <span className="hxm__agent-missing">{t("ns.notDetected")}</span>
                         )}
+                        {!currentRemoteInfo && !probing && !probeFailed && (
+                          <span className="hxm__agent-missing">
+                            {t("ns.notVerified")} · {t("ns.checkHost")}
+                          </span>
+                        )}
                         {probeFailed && !currentRemoteInfo && (
                           <span className="hxm__agent-missing">{t("ns.checkFailed")}</span>
                         )}
