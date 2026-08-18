@@ -1,6 +1,6 @@
 [package]
 name = "helm"
-version = "0.3.0"
+version = "0.4.0"
 description = "Gerenciador desktop de terminais SSH"
 authors = ["milkway"]
 edition = "2021"
