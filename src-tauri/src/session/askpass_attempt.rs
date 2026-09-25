@@ -46,14 +46,21 @@ impl AskpassAttempt {
     }
 
     /// Agenda a remoção do arquivo após `after` — chamar logo após o spawn.
+    ///
+    /// `expired` só é marcado quando a remoção DO TIMER teve sucesso: testar
+    /// `exists()` antes deixava uma janela em que o helper lia o arquivo entre
+    /// o teste e a marcação, e o consumo real passava por expiração (a senha
+    /// recusada seria reenviada pela reconexão).
     pub(crate) fn schedule_expiry(&self, after: Duration) {
         let path = self.secret_file.clone();
         let expired = self.expired.clone();
         std::thread::spawn(move || {
             std::thread::sleep(after);
-            if path.exists() {
-                expired.store(true, Ordering::SeqCst);
-                remove_ignoring_not_found(&path);
+            match std::fs::remove_file(&path) {
+                Ok(()) => expired.store(true, Ordering::SeqCst),
+                // o helper (ou o Drop) chegou antes
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => eprintln!("[askpass] falha ao remover {}: {e}", path.display()),
             }
         });
     }
@@ -83,9 +90,11 @@ fn remove_ignoring_not_found(path: &Path) {
     }
 }
 
-fn session_tag(id: &str) -> u64 {
+/// Hash FNV-1a de 64 bits: nomes curtos e estáveis (arquivos de segredo aqui,
+/// sockets de ControlMaster em `remote.rs`). Não criptográfico.
+pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash = 1469598103934665603u64;
-    for byte in id.as_bytes() {
+    for byte in bytes {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(1099511628211);
     }
@@ -142,7 +151,7 @@ pub(crate) fn create_in(
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
     let secret_file = dir.join(format!(
         "{SECRET_PREFIX}{:016x}-{}-{counter}",
-        session_tag(tag),
+        fnv1a(tag.as_bytes()),
         std::process::id()
     ));
 

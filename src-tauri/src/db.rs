@@ -224,34 +224,35 @@ fn sudo_label_user(label: &str) -> Option<&str> {
     (!user.is_empty()).then_some(user)
 }
 
-/// Usuários que um prompt `[sudo] password for <user>:` pode pedir para que a
-/// credencial `credential_id` seja oferecida: o `user` do host e/ou o usuário
-/// do rótulo `sudo · user@host`. Vazio = nenhum usuário conhecido (qualquer
-/// prompt é aceito, comportamento anterior).
+/// Usuário que um prompt `[sudo] password for <user>:` precisa pedir para
+/// que a credencial `credential_id` seja oferecida — no máximo um:
+/// - o usuário do rótulo `sudo · user@host`, quando o rótulo o traz (vale
+///   também para a credencial vinda do `credential_ref`, que pode ser de um
+///   usuário diferente do login, ex.: login `deploy`, sudo como `root`);
+/// - senão, o `user` do host (credencial do `credential_ref` ou casada por
+///   um rótulo sem usuário).
+///
+/// Nunca exige os dois ao mesmo tempo: com host e rótulo divergentes nenhum
+/// prompt casaria e a credencial ficaria inutilizável. Vazio = nenhum usuário
+/// conhecido (qualquer prompt é aceito, comportamento anterior).
 pub(crate) fn sudo_expected_users(
     host: &Host,
     eligible: &[SudoPasswordCredential],
     credential_id: &str,
 ) -> Vec<String> {
-    let mut users = Vec::new();
-    if let Some(user) = host
-        .user
-        .as_deref()
-        .map(str::trim)
-        .filter(|u| !u.is_empty())
-    {
-        users.push(user.to_string());
-    }
     let label_user = eligible
         .iter()
         .find(|(id, _)| id == credential_id)
         .and_then(|(_, label)| sudo_label_user(label));
-    if let Some(user) = label_user {
-        if !users.iter().any(|u| u == user) {
-            users.push(user.to_string());
-        }
-    }
-    users
+    let host_user = host
+        .user
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty());
+    label_user
+        .or(host_user)
+        .map(|user| vec![user.to_string()])
+        .unwrap_or_default()
 }
 
 fn label_hostname_without_port(host: &str) -> &str {
@@ -679,11 +680,16 @@ mod tests {
             sudo_expected_users(&host, &eligible, "legado"),
             vec!["deploy"]
         );
-        // host e rótulo divergentes: os dois precisam casar (nunca casarão)
+        // rótulo sem usuário casado pelo host: o usuário do host
         assert_eq!(
-            sudo_expected_users(&host, &eligible, "root"),
-            vec!["deploy", "root"]
+            sudo_expected_users(&host, &eligible, "host-only"),
+            vec!["deploy"]
         );
+        // host e rótulo divergentes (credencial via credential_ref): vale o
+        // usuário do rótulo, nunca os dois
+        host.credential_ref = Some("root".into());
+        assert_eq!(sudo_expected_users(&host, &eligible, "root"), vec!["root"]);
+        host.credential_ref = None;
         host.user = Some("root".into());
         assert_eq!(sudo_expected_users(&host, &eligible, "root"), vec!["root"]);
     }

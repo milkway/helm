@@ -28,10 +28,12 @@ const ERROR_RETRY_SECS: u64 = 60;
 const MIN_STABLE_SECS: u64 = 10;
 const EXIT_STATUS_WAIT: Duration = Duration::from_secs(5);
 const SUDO_AUTHORIZE_COOLDOWN: Duration = Duration::from_secs(3);
-/// Um pedido de detach só vale se o ssh terminar logo depois dele: se o
-/// `Ctrl+B d` foi engolido por um programa (não chegou ao tmux), a queda
-/// posterior é tratada como queda normal, não como detach.
-const DETACH_GRACE: Duration = Duration::from_secs(3);
+/// Um pedido de detach vale se o ssh terminar até este prazo depois dele, ou
+/// a qualquer momento com saída limpa (ver `detach_honoured`). Se o `Ctrl+B d`
+/// foi engolido por um programa (não chegou ao tmux), uma QUEDA posterior a
+/// este prazo é tratada como queda normal, não como detach. 15 s cobrem o
+/// eco do detach num link lento/satélite.
+const DETACH_GRACE: Duration = Duration::from_secs(15);
 /// "connected" só sai depois que o ssh sobreviveu este tempo após o 1º byte:
 /// o próprio stderr do ssh (`Permission denied`, `Could not resolve
 /// hostname`) chega pelo PTY e não pode acender "conectado" nem liberar o
@@ -59,6 +61,10 @@ pub struct Session {
     /// e no EOF. Timers de "connected" e escritas enfileiradas de uma
     /// tentativa anterior comparam a geração e viram no-op.
     generation: AtomicU64,
+    /// A tentativa atual chegou a emitir "connected" (sobreviveu ao
+    /// `CONNECTED_SETTLE`). Zerado junto com a virada de `generation` no
+    /// início de cada tentativa e ligado pelo timer sob `status_gate`.
+    settled: AtomicBool,
     /// Serializa a virada de `connected`/`generation` no EOF com a emissão
     /// atrasada de "connected" (o timer nunca emite depois do status de saída).
     status_gate: Mutex<()>,
@@ -404,13 +410,14 @@ fn sudo_prompt_context(tail: &str, prompt: &SudoPromptMatch) -> String {
     }
 }
 
-/// O prompt pede a senha de um usuário compatível com a credencial? `expected`
-/// vem de `db::sudo_expected_users` (user do host e/ou do rótulo); vazio =
-/// nenhum usuário conhecido, qualquer prompt serve. Comparação exata: nomes
-/// de usuário Unix diferenciam maiúsculas. Protege contra um `ssh outro-host`
-/// aninhado (ou uma linha forjada) pedindo a senha de outro usuário.
+/// O prompt pede a senha do usuário da credencial? `expected` vem de
+/// `db::sudo_expected_users` (no máximo um usuário: o do rótulo, senão o do
+/// host); vazio = nenhum usuário conhecido, qualquer prompt serve.
+/// Comparação exata: nomes de usuário Unix diferenciam maiúsculas. Protege
+/// contra um `ssh outro-host` aninhado (ou uma linha forjada) pedindo a senha
+/// de outro usuário.
 fn sudo_prompt_user_matches(expected: &[String], prompt_user: &str) -> bool {
-    expected.iter().all(|user| user == prompt_user)
+    expected.is_empty() || expected.iter().any(|user| user == prompt_user)
 }
 
 /// Estado da credencial a publicar para um prompt: "ok" vira "unmatched"
@@ -621,6 +628,8 @@ struct ExitContext {
     askpass_consumed: bool,
     exit_kind: ExitKind,
     exit_code: Option<u32>,
+    /// a tentativa chegou a emitir "connected" (ver `Session::settled`).
+    settled: bool,
     lived: Duration,
     got_output: bool,
     auto_reconnect: bool,
@@ -653,6 +662,11 @@ enum ExitDecision {
 /// RetryInteractive o askpass fica desligado para a sessão inteira, então
 /// nenhuma reconexão futura reenvia a mesma senha. 255 SEM consumo é falha
 /// de rede/DNS/handshake antes da senha: reconexão normal.
+///
+/// O que separa senha recusada de queda de rede depois do login (o segredo
+/// também foi consumido) é a tentativa ter chegado ao "connected" (`settled`),
+/// não o tempo de vida: num link lento a recusa pode levar mais que
+/// `MIN_STABLE_SECS`, e a senha errada seria repetida pela reconexão.
 fn decide_after_exit(ctx: &ExitContext) -> ExitDecision {
     if ctx.closed {
         return ExitDecision::Exited;
@@ -660,11 +674,7 @@ fn decide_after_exit(ctx: &ExitContext) -> ExitDecision {
     if ctx.detached {
         return ExitDecision::Detached;
     }
-    if ctx.used_askpass
-        && ctx.askpass_consumed
-        && ctx.exit_code == Some(255)
-        && ctx.lived < Duration::from_secs(MIN_STABLE_SECS)
-    {
+    if ctx.used_askpass && ctx.askpass_consumed && ctx.exit_code == Some(255) && !ctx.settled {
         return ExitDecision::RetryInteractive;
     }
     if ctx.exit_kind == ExitKind::Clean || !ctx.auto_reconnect {
@@ -685,11 +695,13 @@ fn decide_after_exit(ctx: &ExitContext) -> ExitDecision {
     }
 }
 
-/// O pedido de detach só é honrado se o EOF chegou até `DETACH_GRACE` depois
-/// dele; um pedido velho (Ctrl+B d engolido) não transforma uma queda
-/// posterior em "detached" — o que impediria a reconexão.
-fn detach_honoured(requested: Option<Instant>, eof: Instant) -> bool {
-    requested.is_some_and(|at| eof.saturating_duration_since(at) <= DETACH_GRACE)
+/// O pedido de detach é honrado se o EOF chegou até `DETACH_GRACE` depois
+/// dele OU se o processo saiu limpo (`clean`: o tmux desanexou e o ssh
+/// retornou o código do comando remoto — num link lento isso pode passar do
+/// prazo). Um pedido velho (Ctrl+B d engolido) não transforma uma QUEDA
+/// posterior (255/sinal) em "detached" — o que impediria a reconexão.
+fn detach_honoured(requested: Option<Instant>, eof: Instant, clean: bool) -> bool {
+    requested.is_some_and(|at| clean || eof.saturating_duration_since(at) <= DETACH_GRACE)
 }
 
 /// Nome de sessão tmux derivado do nome do host (tmux não aceita ':' e '.').
@@ -1049,6 +1061,7 @@ fn emit_connected_if_settled(
         session.generation.load(Ordering::SeqCst) == generation,
         session.closed.load(Ordering::SeqCst),
     ) {
+        session.settled.store(true, Ordering::SeqCst);
         emit_status(app, id, "connected", None, None);
     }
 }
@@ -1213,10 +1226,10 @@ fn manager_loop(
         };
 
         let spawn_result = pty::spawn(cmd, cols, rows);
-        let (lived, got_output, exit_status, detached) = match spawn_result {
+        let (lived, got_output, exit_status, detach_at_eof, settled) = match spawn_result {
             Err(e) => {
                 eprintln!("[session {id}] spawn falhou: {e}");
-                (Duration::ZERO, false, None, false)
+                (Duration::ZERO, false, None, None, false)
             }
             Ok(mut handles) => {
                 // Terminada a fase de autenticação, o segredo não precisa
@@ -1242,6 +1255,7 @@ fn manager_loop(
                 let generation = {
                     let _gate = session.status_gate.lock().unwrap();
                     let generation = session.generation.fetch_add(1, Ordering::SeqCst) + 1;
+                    session.settled.store(false, Ordering::SeqCst);
                     session.connected.store(true, Ordering::SeqCst);
                     generation
                 };
@@ -1286,13 +1300,21 @@ fn manager_loop(
                         }
                     }
                 }
-                {
+                // Sob o gate: depois da virada de geração nenhum timer desta
+                // tentativa liga `settled`, então a leitura é definitiva.
+                let settled = {
                     let _gate = session.status_gate.lock().unwrap();
                     session.connected.store(false, Ordering::SeqCst);
                     session.generation.fetch_add(1, Ordering::SeqCst);
-                }
-                let detached =
-                    detach_honoured(*session.detach_requested.lock().unwrap(), Instant::now());
+                    session.settled.load(Ordering::SeqCst)
+                };
+                // o pedido e o instante do EOF; a decisão de detach espera o
+                // status de saída (saída limpa honra o pedido fora do prazo)
+                let detach_at_eof = session
+                    .detach_requested
+                    .lock()
+                    .unwrap()
+                    .map(|requested| (requested, Instant::now()));
                 set_attention(&app, &session, &id, false, None);
                 // EOF invalida a cauda antes de qualquer espera/reconexão.
                 utf8_tail_pending.clear();
@@ -1310,7 +1332,13 @@ fn manager_loop(
                         None
                     }
                 };
-                (started.elapsed(), got_output, exit_status, detached)
+                (
+                    started.elapsed(),
+                    got_output,
+                    exit_status,
+                    detach_at_eof,
+                    settled,
+                )
             }
         };
         let askpass_consumed = askpass.as_ref().is_some_and(AskpassAttempt::was_consumed);
@@ -1334,6 +1362,9 @@ fn manager_loop(
         }
 
         let exit_kind = classify_exit_status(exit_status.as_ref());
+        let detached = detach_at_eof.is_some_and(|(requested, eof)| {
+            detach_honoured(Some(requested), eof, exit_kind == ExitKind::Clean)
+        });
         let decision = decide_after_exit(&ExitContext {
             closed: session.closed.load(Ordering::Relaxed),
             detached,
@@ -1341,6 +1372,7 @@ fn manager_loop(
             askpass_consumed,
             exit_kind,
             exit_code,
+            settled,
             lived,
             got_output,
             auto_reconnect,
@@ -1469,6 +1501,7 @@ fn start_session(
         io: Mutex::new(None),
         connected: AtomicBool::new(false),
         generation: AtomicU64::new(0),
+        settled: AtomicBool::new(false),
         status_gate: Mutex::new(()),
         stdin_tx,
         attention: AtomicBool::new(false),
@@ -1494,6 +1527,16 @@ fn start_session(
     std::thread::spawn(move || manager_loop(app, id, session, host, params));
 }
 
+/// Resultado da busca da senha SSH de uma credencial no Vault.
+pub(crate) enum SshPassword {
+    Secret(Zeroizing<String>),
+    /// Credencial com senha SSH, mas o Vault está bloqueado: os comandos
+    /// auxiliares avisam em vez de cair calados para BatchMode.
+    Locked,
+    /// Sem credencial SSH elegível ou segredo indisponível.
+    Unavailable,
+}
+
 /// Senha SSH do Vault para uma credencial (`credential_ref` do host ou do
 /// rascunho). Só credenciais password com escopo ssh; qualquer falha cai para
 /// autenticação interativa/BatchMode (None), nunca é erro.
@@ -1502,7 +1545,22 @@ pub(crate) fn resolve_ssh_password(
     vault: &State<'_, Vault>,
     credential_ref: Option<&str>,
 ) -> Option<Zeroizing<String>> {
-    let credential_id = credential_ref.filter(|c| !c.is_empty())?;
+    match lookup_ssh_password(db, vault, credential_ref) {
+        SshPassword::Secret(secret) => Some(secret),
+        SshPassword::Locked | SshPassword::Unavailable => None,
+    }
+}
+
+/// Como `resolve_ssh_password`, mas distingue o Vault bloqueado (`Locked`) de
+/// "sem senha" (`Unavailable`).
+pub(crate) fn lookup_ssh_password(
+    db: &State<'_, Db>,
+    vault: &State<'_, Vault>,
+    credential_ref: Option<&str>,
+) -> SshPassword {
+    let Some(credential_id) = credential_ref.filter(|c| !c.is_empty()) else {
+        return SshPassword::Unavailable;
+    };
     let eligible = {
         let conn = db.0.lock().unwrap();
         db::has_ssh_password_credential(&conn, credential_id)
@@ -1510,22 +1568,26 @@ pub(crate) fn resolve_ssh_password(
     match eligible {
         Ok(true) => {}
         // credencial só de sudo (sem escopo ssh) é configuração normal — sem aviso
-        Ok(false) => return None,
+        Ok(false) => return SshPassword::Unavailable,
         Err(e) => {
             eprintln!(
                 "[session] falha ao consultar credencial SSH ({e}); usando autenticação interativa"
             );
-            return None;
+            return SshPassword::Unavailable;
         }
     }
 
     match vault::get_secret(db, vault, credential_id) {
-        Ok(secret) => Some(Zeroizing::new(secret)),
+        Ok(secret) => SshPassword::Secret(Zeroizing::new(secret)),
+        Err(_) if vault::is_locked(vault) => {
+            eprintln!("[session] cofre bloqueado; senha SSH indisponível");
+            SshPassword::Locked
+        }
         Err(_) => {
             eprintln!(
                 "[session] cofre ou segredo SSH indisponível; usando autenticação interativa"
             );
-            None
+            SshPassword::Unavailable
         }
     }
 }
@@ -1902,8 +1964,8 @@ fn supports_detach(mode: &str) -> bool {
 /// o ssh sai limpo e a sessão tmux continua viva no servidor.
 ///
 /// Só em sessões tmux/clmux conectadas: num shell puro o `Ctrl+B d` iria
-/// para o programa em primeiro plano. O pedido vale por `DETACH_GRACE`; se o
-/// ssh não sair nesse prazo, uma queda posterior reconecta normalmente.
+/// para o programa em primeiro plano. O pedido vale por `DETACH_GRACE` (ou
+/// até uma saída limpa); uma queda posterior ao prazo reconecta normalmente.
 #[tauri::command]
 pub async fn detach_session(sessions: State<'_, Sessions>, id: String) -> Result<(), String> {
     let session = get(&sessions, &id)?;
@@ -1973,6 +2035,7 @@ mod tests {
             askpass_consumed: true,
             exit_kind: ExitKind::Failure,
             exit_code: Some(255),
+            settled: false, // nunca chegou ao "connected"
             lived: Duration::from_secs(2),
             got_output: true, // "Permission denied" chega pelo PTY
             auto_reconnect: true,
@@ -1989,6 +2052,17 @@ mod tests {
         // mesmo sem auto-reconnect o usuário ganha a chance de digitar
         let ctx = ExitContext {
             auto_reconnect: false,
+            ..wrong_password()
+        };
+        assert_eq!(decide_after_exit(&ctx), ExitDecision::RetryInteractive);
+    }
+
+    #[test]
+    fn senha_recusada_em_link_lento_ainda_cai_para_interativo() {
+        // a recusa levou mais que MIN_STABLE_SECS, mas a tentativa nunca
+        // chegou ao "connected": não pode ser reenviada pela reconexão
+        let ctx = ExitContext {
+            lived: Duration::from_secs(11),
             ..wrong_password()
         };
         assert_eq!(decide_after_exit(&ctx), ExitDecision::RetryInteractive);
@@ -2019,9 +2093,23 @@ mod tests {
 
     #[test]
     fn queda_apos_sessao_estavel_com_askpass_reconecta_do_zero() {
+        // segredo consumido no login e 255 depois: queda de rede, não senha
         let ctx = ExitContext {
+            settled: true,
             lived: Duration::from_secs(600),
             attempt: 4,
+            ..wrong_password()
+        };
+        assert_eq!(
+            decide_after_exit(&ctx),
+            ExitDecision::Reconnect {
+                attempt: 1,
+                delay_secs: 1
+            }
+        );
+        // queda rápida depois do "connected" também não é senha errada
+        let ctx = ExitContext {
+            settled: true,
             ..wrong_password()
         };
         assert_eq!(
@@ -2094,9 +2182,31 @@ mod tests {
     #[test]
     fn detach_so_vale_logo_apos_o_pedido() {
         let now = Instant::now();
-        assert!(!detach_honoured(None, now));
-        assert!(detach_honoured(Some(now), now + Duration::from_secs(1)));
-        assert!(!detach_honoured(Some(now), now + Duration::from_secs(60)));
+        assert!(!detach_honoured(None, now, false));
+        assert!(!detach_honoured(None, now, true));
+        assert!(detach_honoured(
+            Some(now),
+            now + Duration::from_secs(1),
+            false
+        ));
+        // link lento: EOF depois de 10 s ainda está no prazo
+        assert!(detach_honoured(
+            Some(now),
+            now + Duration::from_secs(10),
+            false
+        ));
+        // pedido velho + queda (255/sinal): reconecta
+        assert!(!detach_honoured(
+            Some(now),
+            now + Duration::from_secs(60),
+            false
+        ));
+        // pedido + saída limpa fora do prazo: o tmux desanexou
+        assert!(detach_honoured(
+            Some(now),
+            now + Duration::from_secs(60),
+            true
+        ));
         assert!(supports_detach("tmux"));
         assert!(supports_detach("clmux"));
         assert!(!supports_detach("shell"));
@@ -2282,10 +2392,11 @@ mod tests {
         assert!(!sudo_prompt_user_matches(&expected, &upper.user));
         // sem usuário conhecido (host sem user, rótulo sem user): qualquer um
         assert!(sudo_prompt_user_matches(&[], &other.user));
-        // host e rótulo divergentes: nenhum prompt casa
+        // lista de usuários: basta um casar (nunca exige todos)
         let both = vec!["deploy".to_string(), "root".to_string()];
-        assert!(!sudo_prompt_user_matches(&both, "deploy"));
-        assert!(!sudo_prompt_user_matches(&both, "root"));
+        assert!(sudo_prompt_user_matches(&both, "deploy"));
+        assert!(sudo_prompt_user_matches(&both, "root"));
+        assert!(!sudo_prompt_user_matches(&both, "admin"));
     }
 
     #[test]

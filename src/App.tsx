@@ -52,10 +52,15 @@ export default function App() {
       if (e.key === "Escape") {
         // a palette trata o próprio Escape (CommandPalette)
         if (ui.paletteOpen) return;
-        if (ui.modal) ui.closeModal();
-        if (vault.modalOpen) vault.closeModal();
-        const vpn = useVpnStore.getState();
-        if (vpn.panelOpen) vpn.togglePanel(false);
+        // fecha só o que está no topo; um modal ocupado (instalação, salvar) fica
+        if (ui.modal) {
+          if (!ui.modalBusy) ui.closeModal();
+        } else if (vault.modalOpen) {
+          vault.closeModal();
+        } else {
+          const vpn = useVpnStore.getState();
+          if (vpn.panelOpen) vpn.togglePanel(false);
+        }
         return;
       }
       if (ui.modal || vault.modalOpen) return;

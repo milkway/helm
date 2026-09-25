@@ -35,6 +35,9 @@ interface UiState {
   /** último modo usado na Nova sessão (null = usa o startupMode do host) */
   lastSessionMode: SessionMode | null;
   autoTmux: { hostId: string; phase: "detecting" | "unlocking" | "installing" } | null;
+  /** modal com operação em curso (instalação, salvar): Esc/backdrop não fecham */
+  modalBusy: boolean;
+  setModalBusy: (busy: boolean) => void;
   setView: (view: View) => void;
   setGridCols: (cols: GridCols) => void;
   openModal: (modal: Modal) => void;
@@ -72,8 +75,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   defaultAgent: "claude",
   lastSessionMode: null,
   autoTmux: null,
-  openModal: (modal) => set({ modal, paletteOpen: false }),
-  closeModal: () => set({ modal: null }),
+  modalBusy: false,
+  setModalBusy: (modalBusy) => set({ modalBusy }),
+  openModal: (modal) => set({ modal, paletteOpen: false, modalBusy: false }),
+  closeModal: () => set({ modal: null, modalBusy: false }),
   // com um modal aberto a palette não abre (ficaria empilhada sobre ele)
   togglePalette: (open) =>
     set((s) => {

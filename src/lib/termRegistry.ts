@@ -502,9 +502,15 @@ async function createEntry(
         payload.delaySecs ?? null,
         payload.exitCode ?? null,
       );
-      // fora de "connected" o PTY não recebe input: bloqueia a digitação em
-      // vez de perder as teclas em silêncio durante a reconexão
-      term.options.disableStdin = payload.status !== "connected";
+      // sem PTY (reconectando, erro, encerrada, detached) a digitação é
+      // bloqueada em vez de perdida em silêncio. Em "connecting" o PTY já
+      // existe e o ssh pode estar num prompt interativo (senha, host key):
+      // o Rust aceita a escrita antes do "connected" assentar.
+      term.options.disableStdin =
+        payload.status === "reconnecting" ||
+        payload.status === "error" ||
+        payload.status === "exited" ||
+        payload.status === "detached";
 
       const lang = useLangStore.getState().lang;
       if (payload.status === "connected" && (prev === "reconnecting" || prev === "error")) {

@@ -147,6 +147,11 @@ fn authenticate_owner(_app: &AppHandle, _reason: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// O Vault está bloqueado (manual ou auto-lock)?
+pub(crate) fn is_locked(vault: &Vault) -> bool {
+    !vault.0.unlocked.load(Ordering::Relaxed)
+}
+
 fn require_unlocked(vault: &VaultInner) -> Result<(), String> {
     if !vault.unlocked.load(Ordering::Relaxed) {
         return Err("vault bloqueado".into());

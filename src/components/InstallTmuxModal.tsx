@@ -46,6 +46,12 @@ export function InstallTmuxModal({
   const [credId, setCredId] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const setModalBusy = useUiStore((s) => s.setModalBusy);
+  // instalação em curso: Esc global não fecha o modal (o resultado se perderia)
+  useEffect(() => {
+    setModalBusy(busy);
+    return () => setModalBusy(false);
+  }, [busy, setModalBusy]);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(
     initialError ? { ok: false, msg: initialError } : null,
   );

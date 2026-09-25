@@ -8,13 +8,18 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use zeroize::Zeroizing;
 
 use crate::db::{self, Db};
-use crate::session::askpass_attempt::{self, AskpassAttempt};
-use crate::session::manager::resolve_ssh_password;
+use crate::session::askpass_attempt::{self, fnv1a, AskpassAttempt};
+use crate::session::manager::{lookup_ssh_password, SshPassword};
 use crate::vault::{self, Vault};
+
+/// Erro dos comandos auxiliares quando a credencial tem senha SSH mas o Vault
+/// está bloqueado (em vez de um "Permission denied" sem contexto do BatchMode).
+const VAULT_LOCKED_ERROR: &str =
+    "cofre bloqueado: destrave o Vault para usar a senha SSH desta credencial";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,15 +46,6 @@ fn target_of(user: &Option<String>, host: &str) -> Result<String, String> {
         Some(user) if !user.is_empty() => format!("{user}@{host}"),
         _ => host.to_string(),
     })
-}
-
-fn fnv1a(seed: &[u8]) -> u64 {
-    let mut hash: u64 = 1469598103934665603; // FNV-1a
-    for b in seed {
-        hash ^= *b as u64;
-        hash = hash.wrapping_mul(1099511628211);
-    }
-    hash
 }
 
 /// Diretório privado (0700, nosso) para os sockets de ControlMaster. Nunca o
@@ -145,14 +141,16 @@ fn control_path(target: &str, port: Option<u16>) -> Option<std::path::PathBuf> {
 /// one-shot responde UM prompt de senha; prompts de host key/passphrase são
 /// recusados pelo helper, então nada fica esperando input.
 ///
-/// Usa ControlMaster: a 1ª conexão a um host abre um master persistente e as
-/// seguintes (detectar → instalar → verificar) o reaproveitam — a
-/// autenticação (chave/Touch ID/senha) acontece UMA vez por fluxo, não por comando.
+/// Com `Multiplex::Shared` usa ControlMaster: a 1ª conexão a um host abre um
+/// master persistente e as seguintes (detectar → instalar → verificar) o
+/// reaproveitam — a autenticação (chave/Touch ID/senha) acontece UMA vez por
+/// fluxo, não por comando. `Multiplex::Off` sempre autentica de novo.
 fn ssh_command(
     target: &str,
     port: Option<u16>,
     remote_cmd: &str,
     askpass: Option<&AskpassAttempt>,
+    multiplex: Multiplex,
 ) -> Command {
     let mut cmd = Command::new("ssh");
     for key in askpass_attempt::INHERITED_ASKPASS_ENV {
@@ -173,7 +171,11 @@ fn ssh_command(
         }
     }
     cmd.arg("-o").arg("ConnectTimeout=10");
-    match control_path(target, port) {
+    let control = match multiplex {
+        Multiplex::Shared => control_path(target, port),
+        Multiplex::Off => None,
+    };
+    match control {
         Some(path) => {
             cmd.arg("-o")
                 .arg("ControlMaster=auto")
@@ -183,8 +185,9 @@ fn ssh_command(
                 .arg("ControlPersist=45");
         }
         None => {
-            // sem diretório privado: nada de socket em lugar compartilhado.
-            // ControlPath=none também ignora um ControlPath do ~/.ssh/config.
+            // sem multiplexação (pedida ou sem diretório privado): nada de
+            // socket em lugar compartilhado. ControlPath=none também ignora
+            // um ControlPath do ~/.ssh/config.
             cmd.arg("-o")
                 .arg("ControlMaster=no")
                 .arg("-o")
@@ -201,26 +204,51 @@ fn ssh_command(
     cmd
 }
 
+/// Multiplexação (ControlMaster) de um comando ssh auxiliar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Multiplex {
+    /// Reaproveita/abre o master persistente do alvo (detecção, instalação).
+    Shared,
+    /// Conexão própria: o teste de conexão precisa autenticar DE VERDADE com
+    /// a credencial do formulário — um master vivo (ControlPersist) de outro
+    /// comando daria "OK" mesmo com a senha trocada/errada.
+    Off,
+}
+
 /// Prepara o askpass one-shot de um comando auxiliar, se a credencial tiver
-/// senha SSH no Vault (destrancado). Falhas caem para BatchMode (None).
-fn helper_askpass(
+/// senha SSH no Vault. Vault bloqueado com credencial SSH elegível →
+/// `Err(VAULT_LOCKED_ERROR)`; demais falhas caem para BatchMode (`Ok(None)`).
+///
+/// A leitura do keychain (pode abrir o diálogo de ACL) roda fora das threads
+/// do runtime async; os `State` são obtidos lá dentro pelo `AppHandle`.
+async fn helper_askpass(
     app: &AppHandle,
-    db: &State<'_, Db>,
-    vault: &State<'_, Vault>,
-    credential_ref: Option<&str>,
+    credential_ref: Option<String>,
     tag: &str,
-) -> Option<AskpassAttempt> {
-    let secret = resolve_ssh_password(db, vault, credential_ref)?;
+) -> Result<Option<AskpassAttempt>, String> {
+    let lookup_app = app.clone();
+    let password = tauri::async_runtime::spawn_blocking(move || {
+        let db = lookup_app.state::<Db>();
+        let vault = lookup_app.state::<Vault>();
+        lookup_ssh_password(&db, &vault, credential_ref.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let secret = match password {
+        SshPassword::Secret(secret) => secret,
+        SshPassword::Locked => return Err(VAULT_LOCKED_ERROR.into()),
+        SshPassword::Unavailable => return Ok(None),
+    };
     match askpass_attempt::create(app, tag, &secret) {
         Ok(askpass) => {
             // Comandos longos (instalação: até 180s) não mantêm o segredo em
             // disco além da fase de autenticação.
             askpass.schedule_expiry(askpass_attempt::ASKPASS_EXPIRY);
-            Some(askpass)
+            Ok(Some(askpass))
         }
         Err(e) => {
             eprintln!("[remote] preparação do askpass falhou ({e}); usando BatchMode");
-            None
+            Ok(None)
         }
     }
 }
@@ -315,19 +343,13 @@ pub struct TestResult {
 }
 
 #[tauri::command]
-pub async fn test_connection(
-    app: AppHandle,
-    db: State<'_, Db>,
-    vault: State<'_, Vault>,
-    draft: HostDraft,
-) -> Result<TestResult, String> {
+pub async fn test_connection(app: AppHandle, draft: HostDraft) -> Result<TestResult, String> {
     let askpass = helper_askpass(
         &app,
-        &db,
-        &vault,
-        draft.credential_ref.as_deref(),
+        draft.credential_ref.clone(),
         &format!("test-{}", draft.host),
-    );
+    )
+    .await?;
     tauri::async_runtime::spawn_blocking(move || {
         let target = target_of(&draft.user, &draft.host)?;
         let start = Instant::now();
@@ -337,6 +359,7 @@ pub async fn test_connection(
                 draft.port,
                 "echo __HELM_OK__; tmux -V 2>/dev/null || true",
                 askpass.as_ref(),
+                Multiplex::Off,
             ),
             REMOTE_COMMAND_TIMEOUT,
             None,
@@ -392,21 +415,25 @@ const DETECT_SCRIPT: &str = r#"setopt nonomatch >/dev/null 2>&1; export PATH="$H
 pub async fn detect_remote(
     app: AppHandle,
     db: State<'_, Db>,
-    vault: State<'_, Vault>,
     host_id: String,
 ) -> Result<RemoteInfo, String> {
     let host = db::get_host(&db, &host_id)?;
     let askpass = helper_askpass(
         &app,
-        &db,
-        &vault,
-        host.credential_ref.as_deref(),
+        host.credential_ref.clone(),
         &format!("detect-{host_id}"),
-    );
+    )
+    .await?;
     tauri::async_runtime::spawn_blocking(move || {
         let target = target_of(&host.user, &host.host)?;
         let output = run_with_timeout(
-            ssh_command(&target, host.port, DETECT_SCRIPT, askpass.as_ref()),
+            ssh_command(
+                &target,
+                host.port,
+                DETECT_SCRIPT,
+                askpass.as_ref(),
+                Multiplex::Shared,
+            ),
             REMOTE_COMMAND_TIMEOUT,
             None,
             "detecção remota",
@@ -518,11 +545,10 @@ pub async fn install_tmux(
     // Senha SSH (login) via askpass; a senha do SUDO continua só no stdin.
     let askpass = helper_askpass(
         &app,
-        &db,
-        &vault,
-        host.credential_ref.as_deref(),
+        host.credential_ref.clone(),
         &format!("install-{host_id}"),
-    );
+    )
+    .await?;
 
     tauri::async_runtime::spawn_blocking(move || {
         let target = target_of(&host.user, &host.host)?;
@@ -536,7 +562,13 @@ pub async fn install_tmux(
         };
         let remote_cmd = format!("{sudo} 2>&1 && printf '__HELM_TMUX__'; tmux -V 2>/dev/null");
         let output = run_with_timeout(
-            ssh_command(&target, host.port, &remote_cmd, askpass.as_ref()),
+            ssh_command(
+                &target,
+                host.port,
+                &remote_cmd,
+                askpass.as_ref(),
+                Multiplex::Shared,
+            ),
             INSTALL_TIMEOUT,
             password.as_ref().map(|pwd| pwd.as_bytes()),
             "instalação remota",
@@ -568,7 +600,7 @@ pub async fn install_tmux(
 
 #[cfg(test)]
 mod tests {
-    use super::{ssh_command, HostDraft};
+    use super::{ssh_command, HostDraft, Multiplex};
     use crate::session::askpass_attempt::create_in;
     use std::ffi::OsStr;
 
@@ -584,7 +616,13 @@ mod tests {
 
     #[test]
     fn sem_askpass_mantem_batchmode_e_limpa_ambiente() {
-        let cmd = ssh_command("deploy@example.com", Some(2222), "true", None);
+        let cmd = ssh_command(
+            "deploy@example.com",
+            Some(2222),
+            "true",
+            None,
+            Multiplex::Shared,
+        );
         let args = args(&cmd);
         assert!(args.contains(&"BatchMode=yes".to_string()));
         assert!(!args
@@ -601,7 +639,13 @@ mod tests {
     fn com_askpass_troca_batchmode_pelo_helper_one_shot() {
         let base = std::env::temp_dir().join(format!("helm-remote-askpass-{}", std::process::id()));
         let askpass = create_in(&base, "t", "s3cr3t").unwrap();
-        let cmd = ssh_command("deploy@example.com", None, "true", Some(&askpass));
+        let cmd = ssh_command(
+            "deploy@example.com",
+            None,
+            "true",
+            Some(&askpass),
+            Multiplex::Shared,
+        );
         let args = args(&cmd);
         assert!(!args.contains(&"BatchMode=yes".to_string()));
         assert!(args.contains(&"NumberOfPasswordPrompts=1".to_string()));
@@ -695,7 +739,13 @@ mod tests {
 
     #[test]
     fn socket_de_controle_so_em_diretorio_privado() {
-        let cmd = ssh_command("deploy@example.com", Some(22), "true", None);
+        let cmd = ssh_command(
+            "deploy@example.com",
+            Some(22),
+            "true",
+            None,
+            Multiplex::Shared,
+        );
         let args = args(&cmd);
         if let Some(path) = args.iter().find_map(|a| a.strip_prefix("ControlPath=")) {
             if path == "none" {
@@ -710,6 +760,16 @@ mod tests {
         } else {
             panic!("ControlPath ausente");
         }
+    }
+
+    #[test]
+    fn teste_de_conexao_nunca_reusa_master() {
+        // um ControlMaster vivo autenticaria no lugar da credencial testada
+        let cmd = ssh_command("deploy@example.com", Some(22), "true", None, Multiplex::Off);
+        let args = args(&cmd);
+        assert!(args.contains(&"ControlMaster=no".to_string()));
+        assert!(args.contains(&"ControlPath=none".to_string()));
+        assert!(!args.iter().any(|a| a.starts_with("ControlPersist")));
     }
 
     #[test]

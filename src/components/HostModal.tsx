@@ -37,6 +37,11 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<TestResult | null>(null);
   const [saving, setSaving] = useState(false);
+  const setModalBusy = useUiStore((s) => s.setModalBusy);
+  useEffect(() => {
+    setModalBusy(saving);
+    return () => setModalBusy(false);
+  }, [saving, setModalBusy]);
   const [error, setError] = useState<string | null>(null);
   // só mostra o erro do cofre depois de uma tentativa de destravar a partir daqui
   const [unlockTried, setUnlockTried] = useState(false);
@@ -95,7 +100,7 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={closeModal}>
+    <div className="modal-backdrop" onClick={() => !saving && closeModal()}>
       <div className="hxm" onClick={(e) => e.stopPropagation()}>
         <div className="hxm__header">
           <div className="hxm__icon">
