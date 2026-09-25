@@ -1,17 +1,46 @@
 import { useEffect, useState } from "react";
 import { deleteHost } from "../lib/ipc";
+import { IS_MAC } from "../lib/platform";
+import { closeTab } from "../lib/termRegistry";
 import { groupHosts, useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
 import { useVaultStore } from "../stores/vault";
-import { statusColor, type Host, type SessionInfo } from "../types";
+import { statusColor, type Host, type SessionInfo, type SessionStatus } from "../types";
 import { useT } from "../i18n";
 
-function hostSession(sessions: SessionInfo[], hostId: string): SessionInfo | undefined {
-  return sessions.find((s) => s.hostId === hostId);
+/** Gravidade do status para agregar várias sessões do mesmo host (maior = pior). */
+const STATUS_RANK: Record<SessionStatus, number> = {
+  error: 5,
+  reconnecting: 4,
+  connecting: 3,
+  vpn: 3,
+  connected: 2,
+  detached: 1,
+  exited: 0,
+};
+
+/**
+ * Sessão que representa o host na lista: a ativa, senão uma aguardando
+ * input, senão a de pior status. `count` é o total de sessões do host.
+ */
+function hostSession(
+  sessions: SessionInfo[],
+  hostId: string,
+  activeId: string | null,
+): { session: SessionInfo | undefined; count: number } {
+  const mine = sessions.filter((s) => s.hostId === hostId);
+  const session =
+    mine.find((s) => s.id === activeId) ??
+    mine.find((s) => s.attention) ??
+    mine.reduce<SessionInfo | undefined>(
+      (worst, s) => (!worst || STATUS_RANK[s.status] > STATUS_RANK[worst.status] ? s : worst),
+      undefined,
+    );
+  return { session, count: mine.length };
 }
 
-function HostRow({ host }: { host: Host }) {
+function HostRow({ host, onError }: { host: Host; onError: (msg: string | null) => void }) {
   const t = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);
@@ -20,10 +49,18 @@ function HostRow({ host }: { host: Host }) {
   const openModal = useUiStore((s) => s.openModal);
   const loadHosts = useHostsStore((s) => s.load);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  // exclusão em dois cliques: o 1º pede confirmação, o 2º exclui
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  const session = hostSession(sessions, host.id);
+  const closeMenu = () => {
+    setMenu(null);
+    setConfirmingDelete(false);
+  };
+
+  const { session, count } = hostSession(sessions, host.id, activeId);
   const isActive = session != null && session.id === activeId;
   const attention = session?.attention ?? false;
+  const showAddr = host.user != null || host.host !== host.name;
   const color = attention ? "var(--st-attention)" : statusColor(session?.status);
   const connected = session?.status === "connected";
   const connecting = session?.status === "connecting";
@@ -40,6 +77,7 @@ function HostRow({ host }: { host: Host }) {
       onClick={() => (session ? focus(session.id) : open(host.id))}
       onContextMenu={(e) => {
         e.preventDefault();
+        setConfirmingDelete(false);
         setMenu({ x: e.clientX, y: e.clientY });
       }}
     >
@@ -53,10 +91,13 @@ function HostRow({ host }: { host: Host }) {
             <span className="host-row__tmux">tmux</span>
           )}
         </div>
-        <div className="host-row__addr">
-          {host.user ? `${host.user}@${host.host}` : host.host}
-        </div>
+        {showAddr && (
+          <div className="host-row__addr">
+            {host.user ? `${host.user}@${host.host}` : host.host}
+          </div>
+        )}
       </div>
+      {count > 1 && <span className="host-row__badge host-row__badge--count">{count}</span>}
       {attention && <span className="host-row__badge host-row__badge--attention">!</span>}
       {connecting && !attention && <span className="host-row__badge host-row__badge--reconnect">⟳</span>}
       {menu && (
@@ -65,11 +106,11 @@ function HostRow({ host }: { host: Host }) {
             style={{ position: "fixed", inset: 0, zIndex: 79 }}
             onClick={(e) => {
               e.stopPropagation();
-              setMenu(null);
+              closeMenu();
             }}
             onContextMenu={(e) => {
               e.preventDefault();
-              setMenu(null);
+              closeMenu();
             }}
           />
           <div
@@ -84,7 +125,7 @@ function HostRow({ host }: { host: Host }) {
             <div
               className="ctx-menu__item"
               onClick={() => {
-                setMenu(null);
+                closeMenu();
                 openModal({ kind: "newSession", hostId: host.id });
               }}
             >
@@ -93,7 +134,7 @@ function HostRow({ host }: { host: Host }) {
             <div
               className="ctx-menu__item"
               onClick={() => {
-                setMenu(null);
+                closeMenu();
                 openModal({ kind: "editHost", hostId: host.id });
               }}
             >
@@ -102,7 +143,7 @@ function HostRow({ host }: { host: Host }) {
             <div
               className="ctx-menu__item"
               onClick={() => {
-                setMenu(null);
+                closeMenu();
                 openModal({ kind: "installTmux", hostId: host.id });
               }}
             >
@@ -111,11 +152,22 @@ function HostRow({ host }: { host: Host }) {
             <div
               className="ctx-menu__item ctx-menu__item--danger"
               onClick={() => {
-                setMenu(null);
-                void deleteHost(host.id).then(loadHosts);
+                if (!confirmingDelete) {
+                  setConfirmingDelete(true);
+                  return;
+                }
+                closeMenu();
+                onError(null);
+                // fecha as sessões abertas do host antes de excluí-lo
+                for (const s of useSessionsStore.getState().sessions) {
+                  if (s.hostId === host.id) closeTab(s.id);
+                }
+                void deleteHost(host.id)
+                  .then(loadHosts)
+                  .catch((e) => onError(String(e)));
               }}
             >
-              {t("sb.deleteHost")}
+              {confirmingDelete ? t("sb.confirmDelete") : t("sb.deleteHost")}
             </div>
           </div>
         </>
@@ -134,6 +186,7 @@ export function Sidebar() {
   const toggleGroup = useUiStore((s) => s.toggleGroup);
   const sessions = useSessionsStore((s) => s.sessions);
   const focus = useSessionsStore((s) => s.focus);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     void load();
@@ -212,10 +265,15 @@ export function Sidebar() {
               <span className="group__count">{group.hosts.length}</span>
             </div>
             {!collapsed &&
-              group.hosts.map((host) => <HostRow key={host.id} host={host} />)}
+              group.hosts.map((host) => <HostRow key={host.id} host={host} onError={setDeleteError} />)}
           </div>
           );
         })}
+        {deleteError && (
+          <div className="sidebar__empty" style={{ color: "var(--st-attention-text)" }}>
+            {t("sb.deleteError", { msg: deleteError })}
+          </div>
+        )}
       </div>
 
       <VaultFooter />
@@ -249,7 +307,7 @@ function VaultFooter() {
       <div className="vault-footer__body">
         <div className="vault-footer__title">{locked ? t("sb.vaultLocked") : t("sb.vaultUnlocked")}</div>
         <div className="vault-footer__sub">
-          {t("sb.credentials", { n: count })}
+          {t(IS_MAC ? "sb.credentials" : "sb.credentials.linux", { n: count })}
         </div>
       </div>
       <div

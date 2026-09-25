@@ -1,7 +1,7 @@
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useT } from "../i18n";
-import { hostAddr } from "../types";
+import { hostAddr, sessionStatusText } from "../types";
 
 export function StatusBar() {
   const t = useT();
@@ -30,14 +30,12 @@ export function StatusBar() {
       <span className="statusbar__dim statusbar__gap">
         {host.name} · {hostAddr(host)}
       </span>
-      <span className="statusbar__dim">{session.status}</span>
+      <span className="statusbar__dim">{sessionStatusText(session, t)}</span>
       <span className="statusbar__sep">·</span>
       <span className="statusbar__mid">
         {t("st.reconnect", { r: host.autoReconnect ? "auto" : "off", a: host.autoAttach ? "auto" : "off" })}
       </span>
       <div className="statusbar__spacer" />
-      <span className="statusbar__accent">{t("st.clmux")}</span>
-      <span className="statusbar__sep">·</span>
       <span className="statusbar__dim">utf-8</span>
     </div>
   );

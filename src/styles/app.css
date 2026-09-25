@@ -324,6 +324,14 @@
   min-width: 0;
   background: var(--bg-main);
 }
+/* área da view (terminal/grid); referência do toast de atenção */
+.main__view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
 
 /* Toolbar de abas */
 .tabsbar {
@@ -336,7 +344,20 @@
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border-1);
 }
+/* faixa de abas rola na horizontal; controles à direita ficam fixos */
+.tabsbar__tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tabsbar__tabs::-webkit-scrollbar { display: none; }
 .tab {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -352,10 +373,19 @@
 }
 .tab__dot { width: 7px; height: 7px; border-radius: 50%; }
 .tab__dot--pulse { animation: helm-pulse 1.8s infinite; }
-.tab__label { font-size: 12.5px; font-weight: 500; color: var(--text-3); }
+.tab__label {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-3);
+}
 .tab--active .tab__label { font-weight: 600; color: var(--text-strong); }
 .tab__close { font-size: 14px; color: var(--text-muted); margin-left: 2px; }
 .tabsbar__new {
+  flex: none;
   width: 26px;
   height: 26px;
   border-radius: 6px;
@@ -367,7 +397,7 @@
   margin-left: 2px;
 }
 .tabsbar__spacer { flex: 1; }
-.tabsbar__right { display: flex; align-items: center; gap: 6px; padding-right: 6px; }
+.tabsbar__right { flex: none; display: flex; align-items: center; gap: 6px; padding-right: 6px; }
 .tmux-badge {
   display: flex;
   align-items: center;
@@ -668,6 +698,9 @@
 .error-card__note { margin-top: 10px; font-size: 12px; color: var(--text-3); }
 .error-card__actions { display: flex; gap: 9px; margin-top: 16px; align-items: center; }
 .error-card__btn {
+  border: none;
+  background: none;
+  font: inherit;
   height: 34px;
   flex-shrink: 0;
   white-space: nowrap;
@@ -692,6 +725,63 @@
   color: var(--text-2);
 }
 .error-card__btn--ghost { padding: 0 14px; font-weight: 500; color: var(--text-3); }
+.error-card__btn:disabled { opacity: 0.45; cursor: default; }
+/* card de erro recolhido ("ver log completo"): o terminal fica visível */
+.error-logbar {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px 6px 14px;
+  background: var(--bg-danger);
+  border: 1px solid rgba(var(--st-attention-rgb), 0.4);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px var(--shadow-soft);
+  font-family: var(--font-ui);
+  animation: helm-fade 0.3s ease;
+}
+.error-logbar__text { font-size: 12.5px; font-weight: 600; color: var(--st-attention-soft); white-space: nowrap; }
+.error-logbar .error-card__btn { height: 28px; }
+
+/* barra fina de sessão encerrada */
+.exited-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 40px);
+  padding: 7px 8px 7px 13px;
+  background: var(--bg-attention-float);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-3);
+  border-radius: 11px;
+  box-shadow: 0 12px 40px var(--shadow-soft);
+  animation: helm-fade 0.3s ease;
+  font-family: var(--font-ui);
+}
+.exited-bar__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--st-idle); flex: none; }
+.exited-bar__text { font-size: 12.5px; font-weight: 600; color: var(--text-2); white-space: nowrap; }
+.exited-bar__btn {
+  border: 1px solid var(--border-4);
+  background: none;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.exited-bar__btn--primary { border-color: transparent; background: var(--accent); color: var(--on-accent); }
+.exited-bar__btn--primary:hover { background: var(--accent-hover); }
 .error-card__spacer { flex: 1; }
 .error-card__auto { font-size: 11.5px; color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; flex-shrink: 0; }
 
@@ -822,7 +912,6 @@
 .statusbar__sep { color: var(--text-muted); margin: 0 10px; }
 .statusbar__mid { color: var(--text-3); }
 .statusbar__spacer { flex: 1; }
-.statusbar__accent { color: var(--accent); }
 .statusbar__gap { margin: 0 10px; }
 
 /* ── Painel de VPNs (design 4a) ───────────────────────────────────────── */
@@ -898,6 +987,9 @@
 }
 
 /* ── Command palette (design 3b) ──────────────────────────────────────── */
+/* acima dos modais (50) e do painel de VPN (60/61); abaixo do error boundary (80).
+   Duas classes: o .modal-backdrop vem depois no arquivo e venceria o empate. */
+.modal-backdrop.palette-backdrop { z-index: 70; }
 .palette-backdrop {
   align-items: flex-start;
   background: var(--backdrop-soft);
@@ -941,6 +1033,13 @@
   padding: 1px 6px;
 }
 .palette__list { padding: 8px; overflow-y: auto; }
+.palette__notice {
+  padding: 9px 18px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  background: rgba(var(--accent-rgb), 0.1);
+  border-bottom: 1px solid var(--border-2);
+}
 .palette__empty { padding: 16px 10px; color: var(--text-muted); font-size: 13px; }
 .palette__section {
   font-size: 10.5px;
@@ -1791,3 +1890,35 @@
 .cred-card__sub { font-size: 10.5px; color: var(--text-muted); font-family: var(--font-mono); }
 .cred-card__mask { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
 .card-body { flex: 1; }
+
+/* contagem de sessões de um host na sidebar */
+.host-row__badge--count { color: var(--text-2); background: var(--surface-strong); width: auto; min-width: 18px; padding: 0 4px; }
+
+/* erro inline sob um campo do modal de host */
+.hxm__field-err { margin-top: 5px; font-size: 11px; color: var(--st-attention-text); }
+
+/* Toggle virou <button role="switch">: zera o estilo nativo do botão */
+button.hx-toggle {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+button.hx-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+button.hx-toggle .hx-toggle__track,
+button.hx-toggle .hx-toggle__knob { display: block; }
+
+/* Acessibilidade: quem pede menos movimento não recebe pulsos/spins
+   infinitos (spinner de conexão inclusive — o texto já diz o estado). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

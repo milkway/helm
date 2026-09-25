@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useVaultStore, type CredMeta } from "../stores/vault";
 import { PasswordField, Toggle } from "./fields";
+import { IS_MAC } from "../lib/platform";
 import { useT } from "../i18n";
 
 function relativeTime(iso: string | null, t: (k: string, v?: Record<string, string | number>) => string): string {
@@ -21,6 +22,9 @@ function CredRow({ cred }: { cred: CredMeta }) {
   const remove = useVaultStore((s) => s.remove);
   const [secret, setSecret] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  // exclusão em dois cliques dentro do menu ⋯
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const revealGeneration = useRef(0);
 
@@ -43,7 +47,7 @@ function CredRow({ cred }: { cred: CredMeta }) {
   }, [cred.id]);
 
   const isKey = cred.kind === "ssh_key";
-  const badge = isKey ? (cred.algo ?? "key") : (cred.scope ?? "senha");
+  const badge = isKey ? (cred.algo ?? t("vault.kindKey")) : (cred.scope ?? t("vault.kindPassword"));
   const noSecretNote = isKey ? t("vault.noPassphrase") : t("vault.nopasswd");
 
   const doReveal = () => {
@@ -76,9 +80,13 @@ function CredRow({ cred }: { cred: CredMeta }) {
       </span>
       <div className="cred-row__body">
         <div className="cred-row__label">{cred.label}</div>
-        <div className="cred-row__sub">
-          {cred.hasSecret ? relativeTime(cred.lastUsed, t) : noSecretNote}
-        </div>
+        {error ? (
+          <div className="cred-row__sub" style={{ color: "var(--st-attention-text)" }}>{error}</div>
+        ) : (
+          <div className="cred-row__sub">
+            {cred.hasSecret ? relativeTime(cred.lastUsed, t) : noSecretNote}
+          </div>
+        )}
       </div>
       {cred.hasSecret ? (
         <>
@@ -104,18 +112,30 @@ function CredRow({ cred }: { cred: CredMeta }) {
       ) : (
         <span className="cred-row__nosecret">—</span>
       )}
-      <span className="cred-row__more" onClick={() => setMenuOpen((v) => !v)}>
+      <span
+        className="cred-row__more"
+        onClick={() => {
+          setMenuOpen((v) => !v);
+          setConfirmingDelete(false);
+        }}
+      >
         ⋯
         {menuOpen && (
           <div className="cred-row__menu" onClick={(e) => e.stopPropagation()}>
             <div
               className="cred-row__menu-item"
               onClick={() => {
+                if (!confirmingDelete) {
+                  setConfirmingDelete(true);
+                  return;
+                }
                 setMenuOpen(false);
-                void remove(cred.id);
+                setConfirmingDelete(false);
+                setError(null);
+                void remove(cred.id).catch((e) => setError(String(e)));
               }}
             >
-              {t("vault.delete")}
+              {confirmingDelete ? t("vault.confirmDelete") : t("vault.delete")}
             </div>
           </div>
         )}
@@ -145,6 +165,7 @@ function AddCredForm({ onDone }: { onDone: () => void }) {
   const [noPasswd, setNoPasswd] = useState(false);
   const [secret, setSecret] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const secretless = (type === "key" && noPassphrase) || (type === "sudo" && noPasswd);
   const target = user.trim() && host.trim() ? `${user.trim()}@${host.trim()}` : "";
@@ -158,6 +179,7 @@ function AddCredForm({ onDone }: { onDone: () => void }) {
   const submit = () => {
     if (!valid || saving) return;
     setSaving(true);
+    setError(null);
     const meta: CredMeta =
       type === "key"
         ? {
@@ -187,6 +209,7 @@ function AddCredForm({ onDone }: { onDone: () => void }) {
           };
     void save(meta, secretless ? "" : secret)
       .then(onDone)
+      .catch((e) => setError(String(e)))
       .finally(() => setSaving(false));
   };
 
@@ -273,6 +296,7 @@ function AddCredForm({ onDone }: { onDone: () => void }) {
           {t("vault.cancel")}
         </div>
       </div>
+      {error && <div className="vault-modal__error">{error}</div>}
     </div>
   );
 }
@@ -286,15 +310,26 @@ export function VaultModal() {
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
 
+  // cada abertura do modal começa sem filtro e sem formulário pendente
+  useEffect(() => {
+    if (modalOpen) {
+      setQuery("");
+      setAdding(false);
+    }
+  }, [modalOpen]);
+
   if (!modalOpen) return null;
 
   const q = query.toLowerCase();
   const filtered = creds.filter(
-    (c) => c.label.toLowerCase().includes(q) || (c.scope ?? "").includes(q) || (c.algo ?? "").includes(q),
+    (c) =>
+      c.label.toLowerCase().includes(q) ||
+      (c.scope ?? "").toLowerCase().includes(q) ||
+      (c.algo ?? "").toLowerCase().includes(q),
   );
   const keys = filtered.filter((c) => c.kind === "ssh_key");
   const pwds = filtered.filter((c) => c.kind === "password");
-  const backend = navigator.userAgent.includes("Mac") ? "Keychain (macOS)" : "Secret Service (Linux)";
+  const backend = IS_MAC ? "Keychain (macOS)" : "Secret Service (Linux)";
 
   return (
     <div className="modal-backdrop" onClick={closeModal}>
@@ -307,9 +342,9 @@ export function VaultModal() {
             </svg>
           </div>
           <div className="vault-modal__titles">
-            <div className="vault-modal__title">Vault</div>
+            <div className="vault-modal__title">{t("vault.title")}</div>
             <div className="vault-modal__sub">
-              {locked ? t("vault.subLocked", { n: count, backend }) : t("vault.subUnlocked", { n: count, backend })}
+              {locked ? t("vault.subLocked", { n: count, backend }) : t(IS_MAC ? "vault.subUnlocked" : "vault.subUnlocked.linux", { n: count, backend })}
             </div>
           </div>
           {!locked && (
@@ -330,7 +365,7 @@ export function VaultModal() {
               className={`vault-modal__unlock${busy ? " vault-modal__unlock--busy" : ""}`}
               onClick={() => void unlock()}
             >
-              {busy ? t("vault.unlocking") : t("vault.unlock")}
+              {busy ? t("vault.unlocking") : t(IS_MAC ? "vault.unlock" : "vault.unlock.linux")}
             </div>
             {error && <div className="vault-modal__error">{error}</div>}
           </div>

@@ -28,6 +28,9 @@ import { useHostsStore } from "../stores/hosts";
 import { useUiStore } from "../stores/ui";
 import { isSudoCredential, useVaultStore } from "../stores/vault";
 import { sessionUsesTmux, tmuxSessionName, type Host, type SessionStatus } from "../types";
+import { translate } from "../i18n";
+import { useLangStore } from "../i18n/lang";
+import { isAppShortcut } from "./platform";
 
 const THEME_DARK: ITheme = {
   background: "#00000000",
@@ -92,6 +95,11 @@ export interface TermEntry {
 const entries = new Map<string, TermEntry>();
 let currentTheme: "dark" | "light" = "dark";
 
+/** Tema corrente dos terminais (usado pela captura PNG). */
+export function getTermTheme(): "dark" | "light" {
+  return currentTheme;
+}
+
 export function applyTermTheme(theme: "dark" | "light"): void {
   currentTheme = theme;
   const xtermTheme = theme === "light" ? THEME_LIGHT : THEME_DARK;
@@ -104,6 +112,8 @@ type ConnectAbort = { aborted: boolean };
 const pendingAbort = new Map<string, ConnectAbort>();
 /** uma única preparação/instalação automática de tmux por host */
 const tmuxInstallations = new Map<string, Promise<boolean>>();
+/** abort da preparação compartilhada de tmux por host (cancelamento explícito) */
+const tmuxInstallAborts = new Map<string, ConnectAbort>();
 /** holder DOM corrente de cada sessão (setado pelo TermHost montado) */
 const holders = new Map<string, { el: HTMLElement; fontSize: number }>();
 
@@ -173,8 +183,19 @@ function attach(entry: TermEntry): void {
 export function claimHolder(uiId: string, hostId: string, el: HTMLElement, fontSize: number): void {
   holders.set(uiId, { el, fontSize });
   const entry = entries.get(uiId);
-  if (entry) attach(entry);
-  else void ensureTerm(uiId, hostId).catch(() => undefined);
+  if (entry) {
+    attach(entry);
+    return;
+  }
+  void ensureTerm(uiId, hostId).catch((error) => {
+    if (error instanceof ConnectAborted || error instanceof NotRecreating) return;
+    // falha antes do PTY (fonte, listeners…): sem isto o overlay de conexão
+    // giraria para sempre
+    const session = useSessionsStore.getState().sessions.find((s) => s.id === uiId);
+    if (session && (session.status === "connecting" || session.status === "vpn")) {
+      useSessionsStore.getState().setStatus(uiId, "error");
+    }
+  });
 }
 
 export function releaseHolder(uiId: string, el: HTMLElement): void {
@@ -197,7 +218,7 @@ function ensureFonts(): Promise<unknown> {
 
 // Reload de página (dev) não roda cleanups — fecha todos os PTYs.
 window.addEventListener("beforeunload", () => {
-  for (const entry of entries.values()) void closeSession(entry.ptyId);
+  for (const entry of entries.values()) void closeSession(entry.ptyId).catch(() => undefined);
 });
 
 export function getEntry(uiId: string): TermEntry | undefined {
@@ -210,6 +231,10 @@ export function ensureTerm(uiId: string, hostId: string): Promise<TermEntry> {
   if (existing) return Promise.resolve(existing);
   const inflight = pending.get(uiId);
   if (inflight) return inflight;
+  // Remontagem (troca terminal↔grid) de sessão em erro/detached não recria
+  // o PTY por baixo dos panos: o retry passa pelo reattachTab (nova geração).
+  const status = useSessionsStore.getState().sessions.find((s) => s.id === uiId)?.status;
+  if (status === "error" || status === "detached") return Promise.reject(new NotRecreating());
 
   const abort = { aborted: false };
   pendingAbort.set(uiId, abort);
@@ -221,8 +246,22 @@ export function ensureTerm(uiId: string, hostId: string): Promise<TermEntry> {
   return promise;
 }
 
+/** a aba foi fechada/reatachada durante o connect */
+class ConnectAborted extends Error {
+  constructor() {
+    super("sessão cancelada durante a conexão");
+  }
+}
+
+/** sessão em erro/detached: só o reattachTab recria o terminal */
+class NotRecreating extends Error {
+  constructor() {
+    super("sessão aguarda reattach explícito");
+  }
+}
+
 function throwIfAborted(abort: ConnectAbort): void {
-  if (abort.aborted) throw new Error("sessão cancelada durante a conexão");
+  if (abort.aborted) throw new ConnectAborted();
 }
 
 async function prepareSshPassword(hostId: string, abort: ConnectAbort): Promise<void> {
@@ -253,18 +292,19 @@ async function prepareSshPassword(hostId: string, abort: ConnectAbort): Promise<
   }
 }
 
-async function runTmuxInstallation(
-  uiId: string,
-  hostId: string,
-  host: Host,
-  abort: ConnectAbort,
-): Promise<boolean> {
+async function runTmuxInstallation(uiId: string, hostId: string, host: Host): Promise<boolean> {
+  // Instalação compartilhada entre as abas do host: tem abort próprio, que
+  // nenhuma aba cancela — fechar a 1ª aba não derruba a espera das demais.
+  const abort: ConnectAbort = { aborted: false };
+  tmuxInstallAborts.set(hostId, abort);
   const setAutoTmux = useUiStore.getState().setAutoTmux;
   const openManual = (initialInfo?: Awaited<ReturnType<typeof detectRemote>>, initialError?: string) => {
+    // a aba que disparou pode ter sido fechada nesse meio-tempo
+    const resumable = useSessionsStore.getState().sessions.some((s) => s.id === uiId);
     useUiStore.getState().openModal({
       kind: "installTmux",
       hostId,
-      resumeSessionId: uiId,
+      resumeSessionId: resumable ? uiId : undefined,
       initialInfo,
       initialError,
     });
@@ -324,6 +364,7 @@ async function runTmuxInstallation(
     }
     return true;
   } finally {
+    if (tmuxInstallAborts.get(hostId) === abort) tmuxInstallAborts.delete(hostId);
     const autoTmux = useUiStore.getState().autoTmux;
     if (autoTmux?.hostId === hostId) setAutoTmux(null);
   }
@@ -340,27 +381,26 @@ async function prepareTmux(
     return true;
   }
 
-  const inflight = tmuxInstallations.get(hostId);
-  if (inflight) {
-    let ready: boolean;
-    try {
-      ready = await inflight;
-    } catch {
-      // Preserva o fallback existente para rejeições da instalação em voo.
-      throwIfAborted(abort);
-      return true;
-    }
-    throwIfAborted(abort);
-    return ready;
+  let installation = tmuxInstallations.get(hostId);
+  if (!installation) {
+    const created: Promise<boolean> = runTmuxInstallation(uiId, hostId, host).finally(() => {
+      if (tmuxInstallations.get(hostId) === created) tmuxInstallations.delete(hostId);
+    });
+    tmuxInstallations.set(hostId, created);
+    installation = created;
   }
 
-  const installation = runTmuxInstallation(uiId, hostId, host, abort);
-  tmuxInstallations.set(hostId, installation);
+  // cada aba confere só o próprio abort depois de esperar a instalação
+  let ready: boolean;
   try {
-    return await installation;
-  } finally {
-    if (tmuxInstallations.get(hostId) === installation) tmuxInstallations.delete(hostId);
+    ready = await installation;
+  } catch {
+    throwIfAborted(abort);
+    // falha inesperada na instalação: exige ação do usuário
+    return false;
   }
+  throwIfAborted(abort);
+  return ready;
 }
 
 async function createEntry(
@@ -417,7 +457,8 @@ async function createEntry(
   term.open(container);
   let webgl: WebglAddon | null = null;
   try {
-    webgl = new WebglAddon();
+    // preserveDrawingBuffer: sem isto o drawImage da captura PNG sai em branco
+    webgl = new WebglAddon(true);
     webgl.onContextLoss(() => {
       const lostAddon = webgl;
       webgl = null;
@@ -431,6 +472,9 @@ async function createEntry(
   }
   fit.fit();
   disposers.push(() => term.dispose());
+  // atalhos do app (palette, sidebar, detach…) não vão para o PTY: o xterm
+  // ignora o evento e ele sobe até o handler global do window
+  term.attachCustomKeyEventHandler((e) => isAppShortcut(e) === null);
 
   // Listeners ANTES do spawn: os primeiros bytes chegam no arranque.
   try {
@@ -451,17 +495,37 @@ async function createEntry(
     addSessionHandler(statusHandlers, ptyId, (payload) => {
       const prev = lastStatus;
       lastStatus = payload.status;
-      setStatus(uiId, payload.status, payload.attempt ?? null, payload.delaySecs ?? null);
+      setStatus(
+        uiId,
+        payload.status,
+        payload.attempt ?? null,
+        payload.delaySecs ?? null,
+        payload.exitCode ?? null,
+      );
+      // sem PTY (reconectando, erro, encerrada, detached) a digitação é
+      // bloqueada em vez de perdida em silêncio. Em "connecting" o PTY já
+      // existe e o ssh pode estar num prompt interativo (senha, host key):
+      // o Rust aceita a escrita antes do "connected" assentar.
+      term.options.disableStdin =
+        payload.status === "reconnecting" ||
+        payload.status === "error" ||
+        payload.status === "exited" ||
+        payload.status === "detached";
 
+      const lang = useLangStore.getState().lang;
       if (payload.status === "connected" && (prev === "reconnecting" || prev === "error")) {
         const host = useHostsStore.getState().hosts.find((h) => h.id === hostId);
-        const msg = host?.autoAttach
-          ? `reconnected · auto-attached tmux session "${tmuxSessionName(host.name)}"`
-          : "reconnected";
+        const session = useSessionsStore.getState().sessions.find((s) => s.id === uiId);
+        const msg =
+          host && session && sessionUsesTmux(session, host)
+            ? translate(lang, "term.reconnectedTmux", {
+                name: tmuxSessionName(session.params?.sessionName ?? host.name),
+              })
+            : translate(lang, "term.reconnected");
         term.write(`\r\n\x1b[38;2;99;210;155m${msg}\x1b[0m\r\n`);
       }
       if (payload.status === "exited") {
-        term.write("\r\n\x1b[38;2;86;92;100m[sessão encerrada]\x1b[0m\r\n");
+        term.write(`\r\n\x1b[38;2;86;92;100m[${translate(lang, "term.ended")}]\x1b[0m\r\n`);
       }
     }),
   );
@@ -500,17 +564,17 @@ async function createEntry(
     setStatus(uiId, "error");
     throw err;
   }
-  disposers.push(() => void closeSession(ptyId));
+  disposers.push(() => void closeSession(ptyId).catch(() => undefined));
 
   if (abort.aborted) {
     // a aba foi fechada durante o connect: desfaz tudo, incl. o PTY já aberto
     cleanup();
-    throw new Error("sessão cancelada durante a conexão");
+    throw new ConnectAborted();
   }
 
   useSessionsStore.getState().setPtyId(uiId, ptyId);
 
-  const offData = term.onData((data) => void writeStdin(ptyId, data));
+  const offData = term.onData((data) => void writeStdin(ptyId, data).catch(() => undefined));
   disposers.push(() => offData.dispose());
 
   const entry: TermEntry = { uiId, hostId, ptyId, container, term, fit, disposers };
@@ -531,7 +595,7 @@ export function fitEntry(uiId: string): void {
   const lastPtySize = lastPtySizes.get(entry);
   if (lastPtySize && cols === lastPtySize.cols && rows === lastPtySize.rows) return;
   lastPtySizes.set(entry, { cols, rows });
-  void resizePty(entry.ptyId, cols, rows);
+  void resizePty(entry.ptyId, cols, rows).catch(() => undefined);
 }
 
 /** Fecha a sessão por completo: PTY, terminal e aba. */
@@ -560,5 +624,13 @@ function disposeEntry(uiId: string): void {
 
 export function detachTab(uiId: string): void {
   const entry = entries.get(uiId);
-  if (entry) void detachSession(entry.ptyId);
+  if (entry) void detachSession(entry.ptyId).catch(() => undefined);
+}
+
+/** Cancela a preparação automática de tmux de um host (botão Cancelar do
+ * progresso): a instalação compartilhada aborta no próximo passo e não abre
+ * o modal manual. */
+export function cancelTmuxInstallation(hostId: string): void {
+  const abort = tmuxInstallAborts.get(hostId);
+  if (abort) abort.aborted = true;
 }

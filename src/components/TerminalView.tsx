@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { authorizeSudo, dismissSudoPrompt, retrySession } from "../lib/ipc";
-import { reattachTab } from "../lib/termRegistry";
+import { closeTab, reattachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
 import { useVaultStore } from "../stores/vault";
-import { hostAddr, type Host, type SessionInfo } from "../types";
+import { hostAddr, sessionUsesTmux, type Host, type SessionInfo } from "../types";
 import { useT } from "../i18n";
 import { TermHost } from "./TermHost";
 
@@ -43,6 +43,8 @@ function ConnectingOverlay({
 function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) {
   const t = useT();
   const openModal = useUiStore((s) => s.openModal);
+  // "ver log completo" esconde o card e revela a saída do terminal por trás
+  const [showLog, setShowLog] = useState(false);
   const retryNow = () => {
     if (session.ptyId) {
       // sessão ainda viva no Rust aguardando o ciclo de 60s
@@ -51,6 +53,25 @@ function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) 
       reattachTab(session.id);
     }
   };
+  const hostName = host?.name ?? session.hostId;
+  const addr = host ? hostAddr(host) : "";
+
+  if (showLog) {
+    return (
+      <div className="error-logbar">
+        <span className="error-logbar__text">
+          {t(session.everConnected ? "err.title" : "err.titleFirst", { host: hostName })}
+        </span>
+        <button
+          type="button"
+          className="error-card__btn error-card__btn--secondary"
+          onClick={() => setShowLog(false)}
+        >
+          {t("err.back")}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="error-overlay">
@@ -59,10 +80,10 @@ function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) 
           <div className="error-card__badge">!</div>
           <div className="error-card__titles">
             <div className="error-card__title">
-              {t("err.title", { host: host?.name ?? session.hostId })}
+              {t(session.everConnected ? "err.title" : "err.titleFirst", { host: hostName })}
             </div>
             <div className="error-card__sub">
-              {t("err.sub", { addr: host ? hostAddr(host) : "" })}
+              {session.attempt !== null ? t("err.sub", { n: session.attempt, addr }) : addr}
             </div>
           </div>
         </div>
@@ -76,22 +97,62 @@ function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) 
             </div>
           ))}
         </div>
-        <div className="error-card__note">{t("err.note")}</div>
+        <div className="error-card__note">
+          {sessionUsesTmux(session, host) ? t("err.note") : t("err.noteShell")}
+        </div>
         <div className="error-card__actions">
-          <div className="error-card__btn error-card__btn--primary" onClick={retryNow}>
+          <button
+            type="button"
+            className="error-card__btn error-card__btn--primary"
+            onClick={retryNow}
+          >
             {t("err.retryNow")}
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
             className="error-card__btn error-card__btn--secondary"
+            disabled={!host}
             onClick={() => host && openModal({ kind: "editHost", hostId: host.id })}
           >
             {t("err.editHost")}
-          </div>
-          <div className="error-card__btn error-card__btn--ghost">{t("err.viewLog")}</div>
+          </button>
+          <button
+            type="button"
+            className="error-card__btn error-card__btn--ghost"
+            onClick={() => setShowLog(true)}
+          >
+            {t("err.viewLog")}
+          </button>
           <div className="error-card__spacer" />
-          <div className="error-card__auto">{t("err.autoRetry")}</div>
+          {/* só há retry automático enquanto o Rust ainda possui a sessão */}
+          {session.ptyId && <div className="error-card__auto">{t("err.autoRetry")}</div>}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Barra fina de sessão encerrada (o processo remoto saiu). */
+function ExitedBar({ session }: { session: SessionInfo }) {
+  const t = useT();
+  return (
+    <div className="exited-bar">
+      <span className="exited-bar__dot" />
+      <span className="exited-bar__text">
+        {session.exitCode !== null
+          ? t("exit.endedCode", { code: session.exitCode })
+          : t("exit.ended")}
+      </span>
+      <button
+        type="button"
+        className="exited-bar__btn exited-bar__btn--primary"
+        onClick={() => reattachTab(session.id)}
+      >
+        {t("exit.reconnect")}
+      </button>
+      <button type="button" className="exited-bar__btn" onClick={() => closeTab(session.id)}>
+        {t("exit.close")}
+      </button>
     </div>
   );
 }
@@ -115,7 +176,6 @@ function DetachedOverlay({ session, host }: { session: SessionInfo; host?: Host 
           <button
             type="button"
             className="error-card__btn error-card__btn--primary"
-            style={{ border: "none", font: "inherit" }}
             onClick={() => {
               setClicked(true);
               reattachTab(session.id);
@@ -258,18 +318,19 @@ export function TerminalView() {
             )}
             {session.status === "error" && <ErrorOverlay session={session} host={host} />}
             {session.status === "detached" && <DetachedOverlay session={session} host={host} />}
+            {session.status === "exited" && <ExitedBar session={session} />}
             {session.id === activeId && session.sudoPrompt && <SudoToast session={session} />}
           </div>
         );
       })}
-      <AttentionToast />
     </div>
   );
 }
 
 /** Toast de atenção no canto inferior direito, para a 1ª sessão em atenção
- * que não seja a ativa. "Jump →" foca a sessão. */
-function AttentionToast() {
+ * que não seja a ativa. "Jump →" foca a sessão. Renderizado no App (vale
+ * também para o grid). */
+export function AttentionToast() {
   const t = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const activeId = useSessionsStore((s) => s.activeId);

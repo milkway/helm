@@ -39,6 +39,10 @@ export interface SessionInfo {
   /** tentativa de reconexão corrente (1–5) */
   attempt: number | null;
   connectedAt: number | null;
+  /** já esteve conectada alguma vez (1ª conexão vs reconexão nos overlays) */
+  everConnected: boolean;
+  /** código de saída do processo remoto quando status === "exited" */
+  exitCode: number | null;
   /** id da sessão no Rust (registrado pelo Term ao montar) */
   ptyId: string | null;
   /** incrementa para forçar remontagem do Term (re-attach pós-detach) */
@@ -98,4 +102,27 @@ export function sessionUsesTmux(session: SessionInfo, host: Host | undefined): b
   if (session.params) return session.params.mode !== "shell";
   if (!host) return false;
   return host.autoAttach || host.startupMode !== "shell";
+}
+
+/** Texto localizado do status de uma sessão (status bar, inspector). */
+export function sessionStatusText(
+  s: SessionInfo,
+  t: (k: string, v?: Record<string, string | number>) => string,
+): string {
+  switch (s.status) {
+    case "connected":
+      return t("sess.connected");
+    case "connecting":
+      return t("sess.connecting");
+    case "reconnecting":
+      return t("sess.reconnecting", { n: s.attempt ?? 1 });
+    case "vpn":
+      return t("sess.vpn");
+    case "error":
+      return t("sess.error");
+    case "detached":
+      return t("sess.detached");
+    default:
+      return t("sess.exited");
+  }
 }

@@ -1,17 +1,26 @@
 import { create } from "zustand";
 import type { SessionParams, SudoCredentialState } from "../lib/ipc";
-import type { SessionInfo, SessionStatus } from "../types";
+import { sessionUsesTmux, type SessionInfo, type SessionStatus } from "../types";
 import { translate } from "../i18n";
 import { useLangStore } from "../i18n/lang";
+import { useHostsStore } from "./hosts";
 
 /** contador monotônico p/ dar id estável a cada linha de log (key do React) */
 let logSeq = 0;
 
+const LOCALE: Record<string, string> = { en: "en-US", pt: "pt-BR", fr: "fr-FR", es: "es-ES" };
+
 function timestamp(): string {
-  return new Date().toLocaleTimeString("pt-BR", { hour12: false });
+  const locale = LOCALE[useLangStore.getState().lang] ?? "en-US";
+  return new Date().toLocaleTimeString(locale, { hour12: false });
 }
 
-function logLine(status: SessionStatus, attempt: number | null, delaySecs: number | null): string {
+function logLine(
+  status: SessionStatus,
+  attempt: number | null,
+  delaySecs: number | null,
+  usesTmux: boolean,
+): string {
   const ts = timestamp();
   const lang = useLangStore.getState().lang;
   const tr = (k: string, v?: Record<string, string | number>) => translate(lang, k, v);
@@ -24,7 +33,8 @@ function logLine(status: SessionStatus, attempt: number | null, delaySecs: numbe
     case "reconnecting":
       return `${ts} ${tr("log.reconnecting", { n: attempt ?? 1, d: delaySecs ?? 0 })}`;
     case "error":
-      return `${ts} ${tr("log.error")}`;
+      // só promete "sessão preservada" quando há tmux do outro lado
+      return `${ts} ${tr(usesTmux ? "log.error" : "log.errorShell")}`;
     case "detached":
       return `${ts} ${tr("log.detached")}`;
     default:
@@ -40,7 +50,13 @@ interface SessionsState {
   open: (hostId: string, params?: SessionParams) => string;
   focus: (id: string) => void;
   close: (id: string) => void;
-  setStatus: (id: string, status: SessionStatus, attempt?: number | null, delaySecs?: number | null) => void;
+  setStatus: (
+    id: string,
+    status: SessionStatus,
+    attempt?: number | null,
+    delaySecs?: number | null,
+    exitCode?: number | null,
+  ) => void;
   setPtyId: (id: string, ptyId: string | null) => void;
   setAttention: (id: string, active: boolean) => void;
   setSudoPrompt: (
@@ -69,6 +85,8 @@ export const useSessionsStore = create<SessionsState>((set) => ({
           status: "connecting",
           attempt: null,
           connectedAt: null,
+          everConnected: false,
+          exitCode: null,
           ptyId: null,
           generation: 0,
           log: [],
@@ -106,7 +124,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
       return { sessions, activeId };
     }),
 
-  setStatus: (id, status, attempt = null, delaySecs = null) =>
+  setStatus: (id, status, attempt = null, delaySecs = null, exitCode = null) =>
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === id
@@ -114,11 +132,30 @@ export const useSessionsStore = create<SessionsState>((set) => ({
               ...x,
               status,
               attempt,
+              // uptime conta desde a ÚLTIMA conexão: reconexão zera; fora de
+              // connected o valor fica nulo (o inspector mostra "—")
               connectedAt:
-                status === "connected" ? (x.connectedAt ?? Date.now()) : x.connectedAt,
+                status === "connected"
+                  ? x.status === "connected"
+                    ? x.connectedAt
+                    : Date.now()
+                  : null,
+              everConnected: x.everConnected || status === "connected",
+              exitCode: status === "exited" ? exitCode : null,
               log: [
                 ...x.log.slice(-30),
-                { id: logSeq++, text: logLine(status, attempt, delaySecs) },
+                {
+                  id: logSeq++,
+                  text: logLine(
+                    status,
+                    attempt,
+                    delaySecs,
+                    sessionUsesTmux(
+                      x,
+                      useHostsStore.getState().hosts.find((h) => h.id === x.hostId),
+                    ),
+                  ),
+                },
               ],
             }
           : x,
@@ -163,6 +200,8 @@ export const useSessionsStore = create<SessionsState>((set) => ({
               status: "connecting",
               attempt: null,
               connectedAt: null,
+              everConnected: false,
+              exitCode: null,
               log: x.log,
               attention: false,
               sudoPrompt: false,

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { LANGS, useLangStore } from "../i18n";
+import { LANGS, useLangStore, useT } from "../i18n";
 
 export function LanguageSelector() {
   const lang = useLangStore((s) => s.lang);
   const setLang = useLangStore((s) => s.setLang);
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -20,7 +21,7 @@ export function LanguageSelector() {
 
   return (
     <div ref={ref} className="lang">
-      <div className="lang__btn" title="Language / Idioma" onClick={() => setOpen((v) => !v)}>
+      <div className="lang__btn" title={t("lang.label")} onClick={() => setOpen((v) => !v)}>
         <span className="lang__flag">{current.flag}</span>
         <span className="lang__code">{current.code.toUpperCase()}</span>
       </div>

@@ -30,35 +30,49 @@ export function TabsToolbar() {
       ? tmuxSessionName(tmuxActive.name)
       : null;
 
+  // rótulos repetidos (ex.: duas shells no mesmo host) ganham " (2)", " (3)"… por ordem
+  const seen = new Map<string, number>();
+  const labels = sessions.map((session) => {
+    const base = session.params?.sessionName ?? hostName(session.hostId);
+    const n = (seen.get(base) ?? 0) + 1;
+    seen.set(base, n);
+    return n > 1 ? `${base} (${n})` : base;
+  });
+
   return (
     <div className="tabsbar">
-      {sessions.map((session) => {
-        const active = session.id === activeId;
-        return (
-          <div
-            key={session.id}
-            className={`tab${active ? " tab--active" : ""}`}
-            onClick={() => focus(session.id)}
-          >
-            <span
-              className={`tab__dot${session.attention ? " tab__dot--pulse" : ""}`}
-              style={{ background: session.attention ? "var(--st-attention)" : statusColor(session.status) }}
-            />
-            <span className="tab__label">
-              {session.params?.sessionName ?? hostName(session.hostId)}
-            </span>
-            <span
-              className="tab__close"
-              onClick={(e) => {
-                e.stopPropagation();
-                closeTab(session.id);
-              }}
+      <div className="tabsbar__tabs">
+        {sessions.map((session, i) => {
+          const active = session.id === activeId;
+          const label = labels[i];
+          return (
+            <div
+              key={session.id}
+              className={`tab${active ? " tab--active" : ""}`}
+              title={label}
+              onClick={() => focus(session.id)}
             >
-              ×
-            </span>
-          </div>
-        );
-      })}
+              <span
+                className={`tab__dot${session.attention ? " tab__dot--pulse" : ""}`}
+                style={{ background: session.attention ? "var(--st-attention)" : statusColor(session.status) }}
+              />
+              <span className="tab__label">{label}</span>
+              <span
+                className="tab__close"
+                role="button"
+                aria-label={t("tt.closeTab")}
+                title={t("tt.closeTab")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeTab(session.id);
+                }}
+              >
+                ×
+              </span>
+            </div>
+          );
+        })}
+      </div>
       <div
         className="tabsbar__new"
         title={t("tt.newSession")}

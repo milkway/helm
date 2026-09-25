@@ -15,6 +15,14 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(manager::Sessions::default())
         .setup(|app| {
+            // Segredos askpass de execuções que morreram antes do Drop (crash,
+            // kill -9) não podem sobreviver em disco.
+            if let Ok(dir) = app.path().app_data_dir() {
+                let removed = session::askpass_attempt::wipe_stale(&dir);
+                if removed > 0 {
+                    eprintln!("[askpass] {removed} segredo(s) órfão(s) removido(s)");
+                }
+            }
             let conn = db::open(app.handle()).map_err(std::io::Error::other)?;
             app.manage(db::Db(std::sync::Mutex::new(conn)));
             let v = vault::Vault::default();
@@ -65,7 +73,10 @@ pub fn run() {
     let mut shutdown_started = false;
     app.run(move |app, event| {
         if !shutdown_started
-            && matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit)
+            && matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            )
         {
             shutdown_started = true;
             if let Some(sessions) = app.try_state::<manager::Sessions>() {

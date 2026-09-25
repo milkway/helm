@@ -4,8 +4,7 @@ import { useUiStore } from "../stores/ui";
 import { useVpnStore } from "../stores/vpn";
 import { useT } from "../i18n";
 import { LanguageSelector } from "./LanguageSelector";
-
-const IS_MAC = navigator.userAgent.includes("Mac");
+import { IS_MAC, shortcutLabel } from "../lib/platform";
 
 export function Titlebar() {
   const t = useT();
@@ -30,15 +29,9 @@ export function Titlebar() {
 
   return (
     <div className="titlebar" data-tauri-drag-region>
-      {IS_MAC ? (
-        <div className="titlebar__lights titlebar__lights--spacer" />
-      ) : (
-        <div className="titlebar__lights">
-          <div className="titlebar__light" style={{ background: "var(--st-attention)" }} />
-          <div className="titlebar__light" style={{ background: "var(--st-reconnect)" }} />
-          <div className="titlebar__light" style={{ background: "var(--st-connected)" }} />
-        </div>
-      )}
+      {/* macOS: reserva o espaço dos traffic lights nativos (overlay); no
+          Linux a decoração nativa da janela já existe — nada de luzes falsas */}
+      {IS_MAC && <div className="titlebar__lights titlebar__lights--spacer" />}
       <div className="titlebar__brand">
         <div className="titlebar__logo">H</div>
         <span className="titlebar__name">Helm</span>
@@ -50,7 +43,7 @@ export function Titlebar() {
             <path d="M21 21l-4-4" />
           </svg>
           <span className="titlebar__search-text">{t("tb.search")}</span>
-          <span className="titlebar__kbd">⌘K</span>
+          <span className="titlebar__kbd">{shortcutLabel("K")}</span>
         </div>
       </div>
       <div className="titlebar__right">
