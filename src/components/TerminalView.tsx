@@ -60,7 +60,7 @@ function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) 
     return (
       <div className="error-logbar">
         <span className="error-logbar__text">
-          {t(session.connectedAt === null ? "err.titleFirst" : "err.title", { host: hostName })}
+          {t(session.everConnected ? "err.title" : "err.titleFirst", { host: hostName })}
         </span>
         <button
           type="button"
@@ -80,7 +80,7 @@ function ErrorOverlay({ session, host }: { session: SessionInfo; host?: Host }) 
           <div className="error-card__badge">!</div>
           <div className="error-card__titles">
             <div className="error-card__title">
-              {t(session.connectedAt === null ? "err.titleFirst" : "err.title", { host: hostName })}
+              {t(session.everConnected ? "err.title" : "err.titleFirst", { host: hostName })}
             </div>
             <div className="error-card__sub">
               {session.attempt !== null ? t("err.sub", { n: session.attempt, addr }) : addr}

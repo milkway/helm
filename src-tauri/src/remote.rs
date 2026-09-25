@@ -52,46 +52,92 @@ fn fnv1a(seed: &[u8]) -> u64 {
     hash
 }
 
-/// Diretório 0700 para os sockets de ControlMaster, fora do `/tmp` mundialmente
-/// acessível. Namespaced por usuário (hash do HOME). Se não der para garantir um
-/// diretório privado nosso, cai no `temp_dir` (comportamento antigo, sem regressão).
-fn control_dir() -> std::path::PathBuf {
-    let base = std::env::temp_dir();
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    let dir = base.join(format!("helm-{:016x}", fnv1a(home.as_encoded_bytes())));
-    if ensure_private_dir(&dir) {
-        dir
-    } else {
-        base
-    }
+/// Diretório privado (0700, nosso) para os sockets de ControlMaster. Nunca o
+/// `temp_dir()` em si: no Linux ele é o `/tmp` compartilhado, onde outro
+/// usuário poderia plantar/observar sockets. Ordem de preferência:
+/// 1. `$XDG_RUNTIME_DIR/helm` (Linux; o runtime dir já é 0700 do usuário);
+/// 2. `temp_dir()/helm-<hash(HOME)>` (no macOS o `$TMPDIR` já é por usuário).
+///
+/// Sem diretório privado → `None` e o ssh roda sem multiplexação.
+fn control_dir() -> Option<std::path::PathBuf> {
+    let uid = current_uid()?;
+    control_dir_candidates()
+        .into_iter()
+        .find(|dir| ensure_private_dir(dir, uid))
 }
 
-#[cfg(unix)]
-fn ensure_private_dir(dir: &std::path::Path) -> bool {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
-        Ok(()) => true, // criado por nós com 0700
-        // já existe: só confia se for um DIRETÓRIO 0700 (não symlink, não
-        // afrouxado) — senão outro usuário pode tê-lo plantado
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => std::fs::symlink_metadata(dir)
-            .map(|m| m.is_dir() && (m.permissions().mode() & 0o777) == 0o700)
-            .unwrap_or(false),
-        Err(_) => false,
+fn control_dir_candidates() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    #[cfg(target_os = "linux")]
+    if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
+        let runtime = std::path::PathBuf::from(runtime);
+        // só caminho absoluto: relativo dependeria do cwd do app
+        if runtime.is_absolute() {
+            candidates.push(runtime.join("helm"));
+        }
     }
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    // hash curto: o socket precisa caber no limite de ~104 chars do macOS
+    // ($TMPDIR já tem ~49), incluindo o sufixo temporário que o ssh anexa.
+    let hash = fnv1a(home.as_encoded_bytes()) as u32;
+    candidates.push(std::env::temp_dir().join(format!("helm-{hash:08x}")));
+    candidates
+}
+
+/// uid efetivo do processo. Sem `libc` nas dependências, usa o dono do
+/// `$HOME` — o app sempre roda como o dono do próprio HOME; se não rodar
+/// (HOME alheio), os diretórios criados por nós não casam e a multiplexação é
+/// desligada, que é o lado seguro.
+#[cfg(unix)]
+fn current_uid() -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    let home = std::env::var_os("HOME").filter(|h| !h.is_empty())?;
+    std::fs::metadata(home).ok().map(|m| m.uid())
 }
 
 #[cfg(not(unix))]
-fn ensure_private_dir(dir: &std::path::Path) -> bool {
+fn current_uid() -> Option<u32> {
+    Some(0)
+}
+
+/// Garante que `dir` é um diretório (não symlink) 0700 cujo dono é `uid`.
+/// Cria com 0700 se não existir; um diretório pré-existente só é aceito se já
+/// estiver exatamente assim — nunca "conserta" permissões de um diretório que
+/// outro usuário pode ter plantado.
+#[cfg(unix)]
+fn ensure_private_dir(dir: &std::path::Path, uid: u32) -> bool {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => {
+            // o umask pode ter tirado bits; fixa 0700 explicitamente
+            if std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).is_err() {
+                return false;
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(_) => return false,
+    }
+    // symlink_metadata: um symlink (mesmo para um diretório nosso) é recusado
+    std::fs::symlink_metadata(dir)
+        .map(|m| {
+            m.file_type().is_dir() && m.permissions().mode() & 0o777 == 0o700 && m.uid() == uid
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn ensure_private_dir(dir: &std::path::Path, _uid: u32) -> bool {
     std::fs::create_dir_all(dir).is_ok()
 }
 
-/// Caminho do socket de multiplexação para um alvo. Curto (limite ~104
-/// chars para sockets unix no macOS) e estável por alvo+porta. O nome-base é só
-/// o hash (o diretório privado já separa por usuário).
-fn control_path(target: &str, port: Option<u16>) -> std::path::PathBuf {
+/// Caminho do socket de multiplexação para um alvo, ou `None` se não há
+/// diretório privado (ssh então roda com `ControlMaster=no`). Curto (limite
+/// ~104 chars para sockets unix no macOS) e estável por alvo+porta. O
+/// nome-base é só o hash (o diretório privado já separa por usuário).
+fn control_path(target: &str, port: Option<u16>) -> Option<std::path::PathBuf> {
     let mut seed = target.as_bytes().to_vec();
     seed.extend_from_slice(&port.unwrap_or(22).to_le_bytes());
-    control_dir().join(format!("{:016x}", fnv1a(&seed)))
+    Some(control_dir()?.join(format!("{:016x}", fnv1a(&seed))))
 }
 
 /// ssh não-interativo (sem PTY). Sem askpass: chaves/agent/config apenas
@@ -126,17 +172,25 @@ fn ssh_command(
             cmd.arg("-o").arg("BatchMode=yes");
         }
     }
-    cmd.arg("-o")
-        .arg("ConnectTimeout=10")
-        .arg("-o")
-        .arg("ControlMaster=auto")
-        .arg("-o")
-        .arg(format!(
-            "ControlPath={}",
-            control_path(target, port).display()
-        ))
-        .arg("-o")
-        .arg("ControlPersist=45");
+    cmd.arg("-o").arg("ConnectTimeout=10");
+    match control_path(target, port) {
+        Some(path) => {
+            cmd.arg("-o")
+                .arg("ControlMaster=auto")
+                .arg("-o")
+                .arg(format!("ControlPath={}", path.display()))
+                .arg("-o")
+                .arg("ControlPersist=45");
+        }
+        None => {
+            // sem diretório privado: nada de socket em lugar compartilhado.
+            // ControlPath=none também ignora um ControlPath do ~/.ssh/config.
+            cmd.arg("-o")
+                .arg("ControlMaster=no")
+                .arg("-o")
+                .arg("ControlPath=none");
+        }
+    }
     if let Some(port) = port {
         cmd.arg("-p").arg(port.to_string());
     }
@@ -572,6 +626,90 @@ mod tests {
         drop(askpass);
         assert!(!path.exists());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    mod private_dir {
+        use super::super::ensure_private_dir;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use std::path::PathBuf;
+
+        fn scratch(name: &str) -> (PathBuf, u32) {
+            let base =
+                std::env::temp_dir().join(format!("helm-ctl-test-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&base);
+            std::fs::create_dir_all(&base).unwrap();
+            // dono real dos arquivos que este processo cria
+            let uid = std::fs::metadata(&base).unwrap().uid();
+            (base, uid)
+        }
+
+        #[test]
+        fn cria_diretorio_novo_0700() {
+            let (base, uid) = scratch("novo");
+            let dir = base.join("helm");
+            assert!(ensure_private_dir(&dir, uid));
+            let meta = std::fs::symlink_metadata(&dir).unwrap();
+            assert!(meta.is_dir());
+            assert_eq!(meta.permissions().mode() & 0o777, 0o700);
+            // de outro dono: recusado
+            assert!(!ensure_private_dir(&dir, uid.wrapping_add(1)));
+            let _ = std::fs::remove_dir_all(&base);
+        }
+
+        #[test]
+        fn aceita_diretorio_existente_0700_nosso() {
+            let (base, uid) = scratch("existente");
+            let dir = base.join("helm");
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert!(ensure_private_dir(&dir, uid));
+            let _ = std::fs::remove_dir_all(&base);
+        }
+
+        #[test]
+        fn recusa_diretorio_existente_0755() {
+            let (base, uid) = scratch("aberto");
+            let dir = base.join("helm");
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(!ensure_private_dir(&dir, uid));
+            // e não "conserta" as permissões de um diretório pré-existente
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o755);
+            let _ = std::fs::remove_dir_all(&base);
+        }
+
+        #[test]
+        fn recusa_symlink_mesmo_para_diretorio_privado() {
+            let (base, uid) = scratch("symlink");
+            let real = base.join("real");
+            std::fs::create_dir(&real).unwrap();
+            std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let link = base.join("helm");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            assert!(!ensure_private_dir(&link, uid));
+            let _ = std::fs::remove_dir_all(&base);
+        }
+    }
+
+    #[test]
+    fn socket_de_controle_so_em_diretorio_privado() {
+        let cmd = ssh_command("deploy@example.com", Some(22), "true", None);
+        let args = args(&cmd);
+        if let Some(path) = args.iter().find_map(|a| a.strip_prefix("ControlPath=")) {
+            if path == "none" {
+                assert!(args.contains(&"ControlMaster=no".to_string()));
+            } else {
+                assert!(args.contains(&"ControlMaster=auto".to_string()));
+                // nunca direto no temp_dir compartilhado
+                let parent = std::path::Path::new(path).parent().unwrap();
+                assert_ne!(parent, std::env::temp_dir().as_path());
+                assert!(path.len() < 90, "socket longo demais: {path}");
+            }
+        } else {
+            panic!("ControlPath ausente");
+        }
     }
 
     #[test]

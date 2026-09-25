@@ -91,7 +91,9 @@ fn evaluate_biometrics(app: &AppHandle, reason: &str) -> Result<(), AuthError> {
         let ctx = unsafe { LAContext::new() };
 
         if let Err(err) = unsafe { ctx.canEvaluatePolicy_error(policy) } {
-            let _ = tx.send(Err(AuthError::Unavailable(err.localizedDescription().to_string())));
+            let _ = tx.send(Err(AuthError::Unavailable(
+                err.localizedDescription().to_string(),
+            )));
             return;
         }
 
@@ -170,7 +172,10 @@ pub fn spawn_auto_lock(app: AppHandle, vault: Arc<VaultInner>) {
                 eprintln!("[vault] auto-lock após {} min inativo", idle.as_secs() / 60);
                 let _ = app.emit(
                     "vault-status",
-                    VaultStatus { locked: true, count: -1 },
+                    VaultStatus {
+                        locked: true,
+                        count: -1,
+                    },
                 );
             }
         }
@@ -215,7 +220,10 @@ pub fn vault_lock(app: AppHandle, db: State<'_, Db>, vault: State<'_, Vault>) ->
     vault.0.unlocked.store(false, Ordering::Relaxed);
     let count = count_creds(&db);
     emit_vault_status(&app, true, count);
-    VaultStatus { locked: true, count }
+    VaultStatus {
+        locked: true,
+        count,
+    }
 }
 
 #[tauri::command]
@@ -243,8 +251,10 @@ pub fn vault_list(db: State<'_, Db>, vault: State<'_, Vault>) -> Result<Vec<Cred
     Ok(creds)
 }
 
+/// async: o keyring (Keychain/Secret Service) pode abrir diálogo ou demorar;
+/// como comando síncrono rodaria na thread principal e congelaria a janela.
 #[tauri::command]
-pub fn vault_save(
+pub async fn vault_save(
     app: AppHandle,
     db: State<'_, Db>,
     vault: State<'_, Vault>,
@@ -258,8 +268,9 @@ pub fn vault_save(
     }
     let has_secret = !secret.is_empty();
     let keyring_action = if has_secret { "gravar" } else { "remover" };
-    (|| -> Result<(), keyring::Error> {
-        let entry = keyring::Entry::new(KEYRING_SERVICE, &meta.id)?;
+    let keyring_id = meta.id.clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), keyring::Error> {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, &keyring_id)?;
         if has_secret {
             // segredo SÓ no keyring
             entry.set_password(secret.as_str())
@@ -270,7 +281,9 @@ pub fn vault_save(
                 Err(err) => Err(err),
             }
         }
-    })()
+    })
+    .await
+    .map_err(|e| e.to_string())?
     .map_err(|e| format!("falha ao {keyring_action} segredo no keyring: {e}"))?;
 
     let mut conn = db.0.lock().unwrap();
@@ -292,22 +305,31 @@ pub fn vault_save(
     Ok(())
 }
 
+/// async: ver `vault_save`.
 #[tauri::command]
-pub fn vault_delete(
+pub async fn vault_delete(
     app: AppHandle,
     db: State<'_, Db>,
     vault: State<'_, Vault>,
     id: String,
 ) -> Result<(), String> {
     require_unlocked(&vault.0)?;
-    let conn = db.0.lock().unwrap();
-    conn.execute("DELETE FROM credentials_meta WHERE id = ?1", [&id])
-        .map_err(|e| format!("falha ao apagar metadata no SQLite: {e}"))?;
-    drop(conn);
-
-    if let Err(err) = keyring::Entry::new(KEYRING_SERVICE, &id)
-        .and_then(|entry| entry.delete_credential())
     {
+        let conn = db.0.lock().unwrap();
+        conn.execute("DELETE FROM credentials_meta WHERE id = ?1", [&id])
+            .map_err(|e| format!("falha ao apagar metadata no SQLite: {e}"))?;
+    }
+
+    let keyring_id = id.clone();
+    let deleted = tauri::async_runtime::spawn_blocking(move || {
+        keyring::Entry::new(KEYRING_SERVICE, &keyring_id)
+            .and_then(|entry| entry.delete_credential())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|result| result);
+    if let Err(err) = deleted {
         eprintln!(
             "[vault] metadata da credencial {id} apagada, mas falhou ao remover segredo do keyring: {err}"
         );
@@ -348,7 +370,11 @@ pub async fn vault_reveal(
 /// Busca interna de segredo para uso pelo app (ssh/sudo) — sem prompt extra,
 /// mas exige vault destravado e marca o last_used.
 #[allow(dead_code)] // usado nas Fases 6/7 (auth de host e sudo por stdin)
-pub fn get_secret(db: &State<'_, Db>, vault: &State<'_, Vault>, id: &str) -> Result<String, String> {
+pub fn get_secret(
+    db: &State<'_, Db>,
+    vault: &State<'_, Vault>,
+    id: &str,
+) -> Result<String, String> {
     require_unlocked(&vault.0)?;
     let secret = keyring::Entry::new(KEYRING_SERVICE, id)
         .map_err(|e| e.to_string())?

@@ -64,10 +64,7 @@ const MIGRATIONS: &[&str] = &[
 ];
 
 pub fn open(app: &AppHandle) -> Result<Connection, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let conn = Connection::open(dir.join("helm.db")).map_err(|e| e.to_string())?;
     migrate(&conn)?;
@@ -100,10 +97,7 @@ pub fn get_host(db: &State<'_, Db>, id: &str) -> Result<Host, String> {
     .map_err(|e| format!("host {id}: {e}"))
 }
 
-pub(crate) fn has_ssh_password_credential(
-    conn: &Connection,
-    id: &str,
-) -> rusqlite::Result<bool> {
+pub(crate) fn has_ssh_password_credential(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS(
             SELECT 1 FROM credentials_meta
@@ -119,9 +113,7 @@ pub(crate) fn has_ssh_password_credential(
 
 pub(crate) type SudoPasswordCredential = (String, String);
 
-fn sudo_password_credentials(
-    conn: &Connection,
-) -> rusqlite::Result<Vec<SudoPasswordCredential>> {
+fn sudo_password_credentials(conn: &Connection) -> rusqlite::Result<Vec<SudoPasswordCredential>> {
     let mut stmt = conn.prepare(
         "SELECT id, label FROM credentials_meta
          WHERE kind = 'password'
@@ -161,9 +153,7 @@ fn matching_sudo_password_credentials(
                 || label_host_folded == host_name_folded
                 || label_hostname_folded == host_address_folded
                 || label_hostname_folded == host_name_folded;
-            if label_host.is_empty()
-                || !host_matches
-            {
+            if label_host.is_empty() || !host_matches {
                 return false;
             }
             match (label_user, host.user.as_deref()) {
@@ -226,6 +216,44 @@ pub(crate) fn resolve_sudo_password_credential(
     (credential_id, unmatched_exists)
 }
 
+/// Usuário codificado no rótulo `sudo · user@host`, se houver.
+fn sudo_label_user(label: &str) -> Option<&str> {
+    let target = label.trim().strip_prefix("sudo · ")?.trim();
+    let (user, _) = target.rsplit_once('@')?;
+    let user = user.trim();
+    (!user.is_empty()).then_some(user)
+}
+
+/// Usuários que um prompt `[sudo] password for <user>:` pode pedir para que a
+/// credencial `credential_id` seja oferecida: o `user` do host e/ou o usuário
+/// do rótulo `sudo · user@host`. Vazio = nenhum usuário conhecido (qualquer
+/// prompt é aceito, comportamento anterior).
+pub(crate) fn sudo_expected_users(
+    host: &Host,
+    eligible: &[SudoPasswordCredential],
+    credential_id: &str,
+) -> Vec<String> {
+    let mut users = Vec::new();
+    if let Some(user) = host
+        .user
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+    {
+        users.push(user.to_string());
+    }
+    let label_user = eligible
+        .iter()
+        .find(|(id, _)| id == credential_id)
+        .and_then(|(_, label)| sudo_label_user(label));
+    if let Some(user) = label_user {
+        if !users.iter().any(|u| u == user) {
+            users.push(user.to_string());
+        }
+    }
+    users
+}
+
 fn label_hostname_without_port(host: &str) -> &str {
     if let Some(bracketed) = host.strip_prefix('[') {
         if let Some((hostname, port)) = bracketed.rsplit_once("]:") {
@@ -235,8 +263,9 @@ fn label_hostname_without_port(host: &str) -> &str {
         }
     }
     match host.rsplit_once(':') {
-        Some((hostname, port))
-            if !hostname.contains(':') && port.parse::<u16>().is_ok() => hostname,
+        Some((hostname, port)) if !hostname.contains(':') && port.parse::<u16>().is_ok() => {
+            hostname
+        }
         _ => host,
     }
 }
@@ -337,12 +366,14 @@ pub fn save_host(db: State<'_, Db>, host: Host) -> Result<(), String> {
 #[tauri::command]
 pub fn get_pref(db: State<'_, Db>, key: String) -> Result<Option<String>, String> {
     let conn = db.0.lock().unwrap();
-    conn.query_row("SELECT value FROM ui_prefs WHERE key = ?1", [key], |r| r.get(0))
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            e => Err(e.to_string()),
-        })
+    conn.query_row("SELECT value FROM ui_prefs WHERE key = ?1", [key], |r| {
+        r.get(0)
+    })
+    .map(Some)
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        e => Err(e.to_string()),
+    })
 }
 
 #[tauri::command]
@@ -369,7 +400,8 @@ pub fn delete_host(db: State<'_, Db>, id: String) -> Result<(), String> {
 mod tests {
     use super::{
         has_ssh_password_credential, matching_sudo_password_credentials, migrate,
-        resolve_sudo_password_credential, sudo_password_credentials, Host, MIGRATIONS,
+        resolve_sudo_password_credential, sudo_expected_users, sudo_password_credentials, Host,
+        MIGRATIONS,
     };
     use rusqlite::Connection;
 
@@ -379,7 +411,9 @@ mod tests {
         migrate(&conn).unwrap();
 
         // user_version chega ao total de migrações
-        let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(v as usize, MIGRATIONS.len());
 
         // rodar de novo é no-op (skip) e não falha
@@ -575,7 +609,10 @@ mod tests {
         );
 
         host.host = "other".into();
-        assert_eq!(resolve_sudo_password_credential(&host, &eligible), (None, true));
+        assert_eq!(
+            resolve_sudo_password_credential(&host, &eligible),
+            (None, true)
+        );
     }
 
     #[test]
@@ -610,6 +647,45 @@ mod tests {
             matching_sudo_password_credentials(&host, &eligible),
             vec!["host-only".to_string()]
         );
+    }
+
+    #[test]
+    fn usuarios_esperados_vem_do_host_e_do_rotulo() {
+        let eligible = vec![
+            ("root".into(), "sudo · root@produção".into()),
+            ("host-only".into(), "sudo · produção".into()),
+            ("legado".into(), "rótulo legado".into()),
+        ];
+        let mut host = Host {
+            id: "h".into(),
+            name: "Produção".into(),
+            group: String::new(),
+            user: None,
+            host: "prod".into(),
+            port: None,
+            credential_ref: None,
+            vpn_profile: None,
+            auto_reconnect: true,
+            auto_install_tmux: false,
+            auto_attach: true,
+            project_dir: None,
+            startup_mode: "shell".into(),
+        };
+        assert_eq!(sudo_expected_users(&host, &eligible, "root"), vec!["root"]);
+        assert!(sudo_expected_users(&host, &eligible, "host-only").is_empty());
+        assert!(sudo_expected_users(&host, &eligible, "legado").is_empty());
+        host.user = Some(" deploy ".into());
+        assert_eq!(
+            sudo_expected_users(&host, &eligible, "legado"),
+            vec!["deploy"]
+        );
+        // host e rótulo divergentes: os dois precisam casar (nunca casarão)
+        assert_eq!(
+            sudo_expected_users(&host, &eligible, "root"),
+            vec!["deploy", "root"]
+        );
+        host.user = Some("root".into());
+        assert_eq!(sudo_expected_users(&host, &eligible, "root"), vec!["root"]);
     }
 
     #[test]

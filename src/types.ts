@@ -39,6 +39,8 @@ export interface SessionInfo {
   /** tentativa de reconexão corrente (1–5) */
   attempt: number | null;
   connectedAt: number | null;
+  /** já esteve conectada alguma vez (1ª conexão vs reconexão nos overlays) */
+  everConnected: boolean;
   /** código de saída do processo remoto quando status === "exited" */
   exitCode: number | null;
   /** id da sessão no Rust (registrado pelo Term ao montar) */

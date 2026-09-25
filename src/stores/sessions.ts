@@ -8,8 +8,11 @@ import { useHostsStore } from "./hosts";
 /** contador monotônico p/ dar id estável a cada linha de log (key do React) */
 let logSeq = 0;
 
+const LOCALE: Record<string, string> = { en: "en-US", pt: "pt-BR", fr: "fr-FR", es: "es-ES" };
+
 function timestamp(): string {
-  return new Date().toLocaleTimeString("pt-BR", { hour12: false });
+  const locale = LOCALE[useLangStore.getState().lang] ?? "en-US";
+  return new Date().toLocaleTimeString(locale, { hour12: false });
 }
 
 function logLine(
@@ -82,6 +85,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
           status: "connecting",
           attempt: null,
           connectedAt: null,
+          everConnected: false,
           exitCode: null,
           ptyId: null,
           generation: 0,
@@ -128,8 +132,15 @@ export const useSessionsStore = create<SessionsState>((set) => ({
               ...x,
               status,
               attempt,
+              // uptime conta desde a ÚLTIMA conexão: reconexão zera; fora de
+              // connected o valor fica nulo (o inspector mostra "—")
               connectedAt:
-                status === "connected" ? (x.connectedAt ?? Date.now()) : x.connectedAt,
+                status === "connected"
+                  ? x.status === "connected"
+                    ? x.connectedAt
+                    : Date.now()
+                  : null,
+              everConnected: x.everConnected || status === "connected",
               exitCode: status === "exited" ? exitCode : null,
               log: [
                 ...x.log.slice(-30),
@@ -189,6 +200,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
               status: "connecting",
               attempt: null,
               connectedAt: null,
+              everConnected: false,
               exitCode: null,
               log: x.log,
               attention: false,
