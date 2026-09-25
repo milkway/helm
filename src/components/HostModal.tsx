@@ -5,6 +5,7 @@ import { useUiStore } from "../stores/ui";
 import { useVaultStore } from "../stores/vault";
 import type { Host } from "../types";
 import { Toggle } from "./fields";
+import { IS_MAC } from "../lib/platform";
 import { useT } from "../i18n";
 
 /** Add/editar host — design 1b. */
@@ -37,6 +38,8 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
   const [test, setTest] = useState<TestResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // só mostra o erro do cofre depois de uma tentativa de destravar a partir daqui
+  const [unlockTried, setUnlockTried] = useState(false);
 
   const groups = useMemo(() => [...new Set(hosts.map((h) => h.group).filter(Boolean))], [hosts]);
 
@@ -47,14 +50,17 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
       : { user: null as string | null, host: addr.trim() };
   }, [addr]);
 
-  const valid = name.trim().length > 0 && parsed.host.length > 0 && !parsed.host.startsWith("-");
+  const portNum = port ? Number(port) : null;
+  const portInvalid = portNum != null && (portNum < 1 || portNum > 65535);
+  const hostDash = parsed.host.startsWith("-");
+  const valid = name.trim().length > 0 && parsed.host.length > 0 && !hostDash && !portInvalid;
 
-  useEffect(() => setTest(null), [addr, port]);
+  useEffect(() => setTest(null), [addr, port, credentialRef]);
 
   const runTest = () => {
-    if (!parsed.host || testing) return;
+    if (!parsed.host || hostDash || portInvalid || testing) return;
     setTesting(true);
-    void testConnection({ user: parsed.user, host: parsed.host, port: port ? Number(port) : null })
+    void testConnection({ user: parsed.user, host: parsed.host, port: portNum, credentialRef })
       .then(setTest)
       .catch((e) => setTest({ ok: false, latencyMs: 0, tmux: null, message: String(e) }))
       .finally(() => setTesting(false));
@@ -70,7 +76,7 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
       group: group.trim(),
       user: parsed.user,
       host: parsed.host,
-      port: port ? Number(port) : null,
+      port: portNum,
       credentialRef,
       vpnProfile,
       autoReconnect,
@@ -102,7 +108,7 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
           </div>
           <div className="hxm__titles">
             <div className="hxm__title">{editing ? t("hm.edit") : t("hm.add")}</div>
-            <div className="hxm__sub">{t("hm.sub")}</div>
+            <div className="hxm__sub">{t(IS_MAC ? "hm.sub" : "hm.sub.linux")}</div>
           </div>
           <span className="hxm__close" onClick={closeModal}>×</span>
         </div>
@@ -138,6 +144,7 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
                 onChange={(e) => setAddr(e.target.value)}
                 placeholder={t("hm.addrPh")}
               />
+              {hostDash && <div className="hxm__field-err">{t("hm.hostDash")}</div>}
             </div>
             <div>
               <div className="hxm__label">{t("in.port")}</div>
@@ -147,19 +154,26 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
                 onChange={(e) => setPort(e.target.value.replace(/\D/g, ""))}
                 placeholder="22"
               />
+              {portInvalid && <div className="hxm__field-err">{t("hm.portInvalid")}</div>}
             </div>
           </div>
 
           <div>
             <div className="hxm__label">{t("hm.auth")}</div>
             {vault.locked ? (
-              <div className="hxm__cred hxm__cred--locked" onClick={() => void vault.unlock()}>
+              <div
+                className="hxm__cred hxm__cred--locked"
+                onClick={() => {
+                  setUnlockTried(true);
+                  void vault.unlock();
+                }}
+              >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8">
                   <rect x="4" y="10" width="16" height="11" rx="2" />
                   <path d="M8 10V7a4 4 0 0 1 8 0v3" />
                 </svg>
                 <div className="hxm__cred-body">
-                  <div className="hxm__cred-title">ssh-agent / ~/.ssh/config</div>
+                  <div className="hxm__cred-title">{t("hm.authLocked")}</div>
                   <div className="hxm__cred-sub">{t("hm.authLockedSub")}</div>
                 </div>
                 <span className="hxm__badge hxm__badge--amber">VAULT</span>
@@ -171,12 +185,22 @@ export function HostModal({ editHostId }: { editHostId?: string }) {
                 onChange={(e) => setCredentialRef(e.target.value || null)}
               >
                 <option value="">{t("hm.authDefault")}</option>
-                {vault.creds.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label} — {c.kind === "ssh_key" ? (c.algo ?? "chave") : (c.scope ?? "senha")}
-                  </option>
-                ))}
+                {/* chaves SSH do cofre não servem para login (o backend só usa senha);
+                    a atual continua listada para não sumir em silêncio ao editar */}
+                {vault.creds
+                  .filter((c) => c.kind !== "ssh_key" || c.id === credentialRef)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label} —{" "}
+                      {c.kind === "ssh_key"
+                        ? (c.algo ?? t("vault.kindKey"))
+                        : (c.scope ?? t("vault.kindPassword"))}
+                    </option>
+                  ))}
               </select>
+            )}
+            {unlockTried && vault.locked && vault.error && (
+              <div className="hxm__field-err">{vault.error}</div>
             )}
             <div className="hxm__cred-sub" style={{ marginTop: 6 }}>
               {t("hm.authHint")}

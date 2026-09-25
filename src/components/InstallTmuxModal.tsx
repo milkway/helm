@@ -5,6 +5,8 @@ import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
 import { isSudoCredential, useVaultStore } from "../stores/vault";
 import { PasswordField } from "./fields";
+import { IS_MAC } from "../lib/platform";
+import { cancelTmuxInstallation, closeTab } from "../lib/termRegistry";
 import { useT } from "../i18n";
 
 const INSTALL_PREVIEW: Record<string, string> = {
@@ -47,6 +49,8 @@ export function InstallTmuxModal({
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(
     initialError ? { ok: false, msg: initialError } : null,
   );
+  // falha pós-instalação (salvar auto-attach): aviso, não erro de instalação
+  const [warning, setWarning] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialInfo) return;
@@ -81,29 +85,38 @@ export function InstallTmuxModal({
     if (!canInstall || !info?.pkgManager) return;
     setBusy(true);
     setResult(null);
+    setWarning(null);
     void installTmux(
       hostId,
       info.pkgManager,
       source === "vault" ? { credentialId: effectiveCred! } : { password },
     )
-      .then(async (version) => {
-        setResult({ ok: true, msg: t("it.installed", { v: version }) });
-        // com tmux disponível, liga o re-attach automático do host
-        if (host && !host.autoAttach) {
-          await saveHost({ ...host, autoAttach: true });
-          await loadHosts();
-        }
-        if (resumeSessionId) {
-          useSessionsStore.getState().reattach(resumeSessionId);
-          closeModal();
-        }
-      })
-      .catch((e) => setResult({ ok: false, msg: String(e) }))
+      .then(
+        async (version) => {
+          setResult({ ok: true, msg: t("it.installed", { v: version }) });
+          // com tmux disponível, liga o re-attach automático do host; se falhar,
+          // o tmux já está instalado — só avisa e segue retomando a sessão
+          if (host && !host.autoAttach) {
+            try {
+              await saveHost({ ...host, autoAttach: true });
+              await loadHosts();
+            } catch (e) {
+              console.warn("[install-tmux] auto-attach não salvo:", e);
+              setWarning(t("it.saveWarn", { msg: String(e) }));
+            }
+          }
+          if (resumeSessionId) {
+            useSessionsStore.getState().reattach(resumeSessionId);
+            closeModal();
+          }
+        },
+        (e) => setResult({ ok: false, msg: String(e) }),
+      )
       .finally(() => setBusy(false));
   };
 
   return (
-    <div className="modal-backdrop" onClick={closeModal}>
+    <div className="modal-backdrop" onClick={() => !busy && closeModal()}>
       <div className="hxm" style={{ width: 540 }} onClick={(e) => e.stopPropagation()}>
         <div className="hxm__header">
           <div className="hxm__icon hxm__icon--green">
@@ -189,7 +202,7 @@ export function InstallTmuxModal({
                     <path d="M12 11a4 4 0 0 1 4 4v0M12 11a4 4 0 0 0-4 4v2a4 4 0 0 0 8 0" />
                     <path d="M12 3a7 7 0 0 1 7 7v1M12 3a7 7 0 0 0-7 7v4" />
                   </svg>
-                  TOUCH ID
+                  {t(IS_MAC ? "it.authBadge" : "it.authBadge.linux")}
                 </span>
               </div>
               <div
@@ -223,6 +236,7 @@ export function InstallTmuxModal({
               {result.msg}
             </div>
           )}
+          {warning && <div className="hxm__test-result hxm__test-result--err">{warning}</div>}
         </div>
 
         <div className="hxm__footer">
@@ -248,6 +262,15 @@ export function AutoInstallTmuxProgress() {
   );
   if (!autoTmux) return null;
 
+  // cancela a preparação: fecha as abas do host ainda conectando
+  const cancel = () => {
+    cancelTmuxInstallation(autoTmux.hostId);
+    for (const s of useSessionsStore.getState().sessions) {
+      if (s.hostId === autoTmux.hostId && s.status === "connecting") closeTab(s.id);
+    }
+    useUiStore.getState().setAutoTmux(null);
+  };
+
   const message =
     autoTmux.phase === "detecting"
       ? t("it.autoDetecting")
@@ -267,6 +290,11 @@ export function AutoInstallTmuxProgress() {
               {t("it.autoTitle", { host: host?.name ?? autoTmux.hostId })}
             </div>
             <div className="hxm__sub">{message}</div>
+          </div>
+        </div>
+        <div className="hxm__footer">
+          <div className="hxm__btn hxm__btn--ghost" onClick={cancel}>
+            {t("hm.cancel")}
           </div>
         </div>
       </div>

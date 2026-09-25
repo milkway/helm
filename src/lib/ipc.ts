@@ -31,6 +31,8 @@ export function testConnection(draft: {
   user: string | null;
   host: string;
   port: number | null;
+  /** credencial de senha do cofre (hosts sem chave podem ser testados) */
+  credentialRef?: string | null;
 }): Promise<TestResult> {
   return invoke("test_connection", { draft });
 }

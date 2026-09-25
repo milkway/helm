@@ -3,6 +3,7 @@ import helmLogo from "../assets/helm-logo.svg";
 import { importSshConfig } from "../lib/ipc";
 import { useHostsStore } from "../stores/hosts";
 import { useUiStore } from "../stores/ui";
+import { shortcutLabel } from "../lib/platform";
 import { useT } from "../i18n";
 
 /** Primeira execução — sem hosts (design 3a). */
@@ -39,7 +40,7 @@ export function EmptyState() {
       </div>
       {msg && <div className="empty-state__msg">{msg}</div>}
       <div className="empty-state__hint">
-        <span className="empty-state__kbd">⌘K</span> {t("es.hint")}
+        <span className="empty-state__kbd">{shortcutLabel("K")}</span> {t("es.hint")}
       </div>
     </div>
   );

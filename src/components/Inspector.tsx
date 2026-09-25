@@ -3,6 +3,7 @@ import { detachTab } from "../lib/termRegistry";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
+import { useVaultStore } from "../stores/vault";
 import { sessionUsesTmux, statusColor, tmuxSessionName } from "../types";
 import { useT } from "../i18n";
 
@@ -24,6 +25,8 @@ export function Inspector() {
   const hosts = useHostsStore((s) => s.hosts);
   const openModal = useUiStore((s) => s.openModal);
   const defaultAgent = useUiStore((s) => s.defaultAgent);
+  const creds = useVaultStore((s) => s.creds);
+  const vaultLocked = useVaultStore((s) => s.locked);
   const t = useT();
 
   // rerender periódico para o uptime andar
@@ -56,11 +59,40 @@ export function Inspector() {
     { k: t("in.host"), v: host.host },
     { k: t("in.user"), v: host.user ?? t("in.config") },
     { k: t("in.port"), v: host.port ? String(host.port) : t("in.config") },
-    { k: t("in.latency"), v: "—" },
     { k: t("in.uptime"), v: uptime(session.connectedAt) },
     { k: t("in.autoReconnect"), v: host.autoReconnect ? t("in.on") : t("in.off") },
     { k: t("in.autoAttach"), v: host.autoAttach ? t("in.on") : t("in.off") },
   ];
+
+  // bloco "Sessão": modo efetivo, nome do tmux, VPN e tentativa de reconexão
+  const usesTmux = sessionUsesTmux(session, host);
+  const mode = session.params?.mode ?? (host.startupMode !== "shell" ? host.startupMode : usesTmux ? "tmux" : "shell");
+  const modeAgent = session.params?.agent ?? defaultAgent;
+  const modeLabel =
+    mode === "clmux"
+      ? `${t("ns.clmux")} · ${modeAgent === "codex" ? t("ns.codex") : t("ns.claude")}`
+      : mode === "tmux"
+        ? t("ns.tmux")
+        : t("ns.shell");
+  const sessionMeta: { k: string; v: string }[] = [{ k: t("in.mode"), v: modeLabel }];
+  if (usesTmux) {
+    sessionMeta.push({ k: t("in.tmuxSession"), v: session.params?.sessionName ?? tmuxSessionName(host.name) });
+  }
+  if (host.vpnProfile) sessionMeta.push({ k: t("in.vpn"), v: host.vpnProfile });
+  if (session.attempt) sessionMeta.push({ k: t("in.attempt"), v: `${session.attempt}/5` });
+
+  // credentialRef é um UUID: resolve para o rótulo do cofre (se destravado)
+  const cred = host.credentialRef ? creds.find((c) => c.id === host.credentialRef) : undefined;
+  const credTitle = host.credentialRef ? (cred?.label ?? t("in.vaultCred")) : t("in.agentConfig");
+  const credSub = !host.credentialRef
+    ? t("in.credSub")
+    : cred
+      ? cred.kind === "ssh_key"
+        ? (cred.algo ?? t("vault.kindKey"))
+        : (cred.scope ?? t("vault.kindPassword"))
+      : vaultLocked
+        ? t("sb.vaultLocked")
+        : t("in.credMissing");
 
   return (
     <div className="inspector">
@@ -78,7 +110,15 @@ export function Inspector() {
       </div>
 
       <div className="inspector__scroll">
-        <div className="inspector__section">{t("in.connection")}</div>
+        <div className="inspector__section">{t("in.session")}</div>
+        {sessionMeta.map((m) => (
+          <div className="meta-row" key={m.k}>
+            <span className="meta-row__k">{m.k}</span>
+            <span className="meta-row__v">{m.v}</span>
+          </div>
+        ))}
+
+        <div className="inspector__section inspector__section--gap">{t("in.connection")}</div>
         {meta.map((m) => (
           <div className="meta-row" key={m.k}>
             <span className="meta-row__k">{m.k}</span>
@@ -135,7 +175,7 @@ export function Inspector() {
             <div className="action-card__icon">⟳</div>
             <div className="card-body">
               <div className="action-card__title">{t("in.installTmux")}</div>
-              <div className="action-card__sub">ssh -tt · auto</div>
+              <div className="action-card__sub">{t("in.installTmuxSub")}</div>
             </div>
           </div>
           <div
@@ -146,7 +186,7 @@ export function Inspector() {
               open(host.id, { mode: "shell", projectDir: host.projectDir ?? undefined })
             }
           >
-            <div className="action-card__icon">⌘</div>
+            <div className="action-card__icon">$</div>
             <div className="card-body">
               <div className="action-card__title">{t("in.openShell")}</div>
               <div className="action-card__sub">cd {host.projectDir ?? "~"}</div>
@@ -161,8 +201,8 @@ export function Inspector() {
             <path d="M8 10V7a4 4 0 0 1 8 0v3" />
           </svg>
           <div className="card-body">
-            <div className="cred-card__title">{host.credentialRef ?? "ssh-agent / config"}</div>
-            <div className="cred-card__sub">{t("in.credSub")}</div>
+            <div className="cred-card__title">{credTitle}</div>
+            <div className="cred-card__sub">{credSub}</div>
           </div>
           <span className="cred-card__mask">••••</span>
         </div>

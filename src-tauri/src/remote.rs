@@ -8,10 +8,12 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
-use tauri::State;
+use tauri::{AppHandle, State};
 use zeroize::Zeroizing;
 
 use crate::db::{self, Db};
+use crate::session::askpass_attempt::{self, AskpassAttempt};
+use crate::session::manager::resolve_ssh_password;
 use crate::vault::{self, Vault};
 
 #[derive(Debug, Deserialize)]
@@ -20,6 +22,10 @@ pub struct HostDraft {
     pub user: Option<String>,
     pub host: String,
     pub port: Option<u16>,
+    /// Credencial do Vault do formulário (opcional): com senha SSH, o teste
+    /// autentica via askpass em vez de exigir chave.
+    #[serde(default)]
+    pub credential_ref: Option<String>,
 }
 
 fn target_of(user: &Option<String>, host: &str) -> Result<String, String> {
@@ -88,30 +94,81 @@ fn control_path(target: &str, port: Option<u16>) -> std::path::PathBuf {
     control_dir().join(format!("{:016x}", fnv1a(&seed)))
 }
 
-/// ssh não-interativo (sem PTY): chaves/agent/config apenas.
+/// ssh não-interativo (sem PTY). Sem askpass: chaves/agent/config apenas
+/// (`BatchMode=yes`). Com askpass (host com senha SSH no Vault): o helper
+/// one-shot responde UM prompt de senha; prompts de host key/passphrase são
+/// recusados pelo helper, então nada fica esperando input.
 ///
 /// Usa ControlMaster: a 1ª conexão a um host abre um master persistente e as
 /// seguintes (detectar → instalar → verificar) o reaproveitam — a
-/// autenticação (chave/Touch ID) acontece UMA vez por fluxo, não por comando.
-fn ssh_command(target: &str, port: Option<u16>, remote_cmd: &str) -> Command {
+/// autenticação (chave/Touch ID/senha) acontece UMA vez por fluxo, não por comando.
+fn ssh_command(
+    target: &str,
+    port: Option<u16>,
+    remote_cmd: &str,
+    askpass: Option<&AskpassAttempt>,
+) -> Command {
     let mut cmd = Command::new("ssh");
-    cmd.arg("-T")
-        .arg("-o")
-        .arg("BatchMode=yes")
-        .arg("-o")
+    for key in askpass_attempt::INHERITED_ASKPASS_ENV {
+        cmd.env_remove(key);
+    }
+    cmd.arg("-T");
+    match askpass {
+        Some(askpass) => {
+            cmd.env("SSH_ASKPASS", &askpass.helper)
+                .env("SSH_ASKPASS_REQUIRE", "force")
+                .env("HELM_ASKPASS_MODE", "1")
+                .env("HELM_ASKPASS_SECRET_FILE", &askpass.secret_file)
+                .arg("-o")
+                .arg("NumberOfPasswordPrompts=1");
+        }
+        None => {
+            cmd.arg("-o").arg("BatchMode=yes");
+        }
+    }
+    cmd.arg("-o")
         .arg("ConnectTimeout=10")
         .arg("-o")
         .arg("ControlMaster=auto")
         .arg("-o")
-        .arg(format!("ControlPath={}", control_path(target, port).display()))
+        .arg(format!(
+            "ControlPath={}",
+            control_path(target, port).display()
+        ))
         .arg("-o")
         .arg("ControlPersist=45");
     if let Some(port) = port {
         cmd.arg("-p").arg(port.to_string());
     }
     cmd.arg("--").arg(target).arg(remote_cmd);
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     cmd
+}
+
+/// Prepara o askpass one-shot de um comando auxiliar, se a credencial tiver
+/// senha SSH no Vault (destrancado). Falhas caem para BatchMode (None).
+fn helper_askpass(
+    app: &AppHandle,
+    db: &State<'_, Db>,
+    vault: &State<'_, Vault>,
+    credential_ref: Option<&str>,
+    tag: &str,
+) -> Option<AskpassAttempt> {
+    let secret = resolve_ssh_password(db, vault, credential_ref)?;
+    match askpass_attempt::create(app, tag, &secret) {
+        Ok(askpass) => {
+            // Comandos longos (instalação: até 180s) não mantêm o segredo em
+            // disco além da fase de autenticação.
+            askpass.schedule_expiry(askpass_attempt::ASKPASS_EXPIRY);
+            Some(askpass)
+        }
+        Err(e) => {
+            eprintln!("[remote] preparação do askpass falhou ({e}); usando BatchMode");
+            None
+        }
+    }
 }
 
 const REMOTE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
@@ -187,7 +244,11 @@ fn run_with_timeout(
         .join()
         .map_err(|_| format!("falha ao coletar stderr de {operation}"))?
         .map_err(|e| e.to_string())?;
-    Ok(Output { status, stdout, stderr })
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -200,16 +261,35 @@ pub struct TestResult {
 }
 
 #[tauri::command]
-pub async fn test_connection(draft: HostDraft) -> Result<TestResult, String> {
+pub async fn test_connection(
+    app: AppHandle,
+    db: State<'_, Db>,
+    vault: State<'_, Vault>,
+    draft: HostDraft,
+) -> Result<TestResult, String> {
+    let askpass = helper_askpass(
+        &app,
+        &db,
+        &vault,
+        draft.credential_ref.as_deref(),
+        &format!("test-{}", draft.host),
+    );
     tauri::async_runtime::spawn_blocking(move || {
         let target = target_of(&draft.user, &draft.host)?;
         let start = Instant::now();
         let output = run_with_timeout(
-            ssh_command(&target, draft.port, "echo __HELM_OK__; tmux -V 2>/dev/null || true"),
+            ssh_command(
+                &target,
+                draft.port,
+                "echo __HELM_OK__; tmux -V 2>/dev/null || true",
+                askpass.as_ref(),
+            ),
             REMOTE_COMMAND_TIMEOUT,
             None,
             "teste de conexão",
-        )?;
+        );
+        drop(askpass); // apaga o segredo assim que o ssh retorna
+        let output = output?;
         let latency_ms = start.elapsed().as_millis() as u64;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let ok = stdout.contains("__HELM_OK__");
@@ -221,9 +301,20 @@ pub async fn test_connection(draft: HostDraft) -> Result<TestResult, String> {
             None
         } else {
             let err = String::from_utf8_lossy(&output.stderr);
-            Some(err.lines().last().unwrap_or("conexão falhou").trim().to_string())
+            Some(
+                err.lines()
+                    .last()
+                    .unwrap_or("conexão falhou")
+                    .trim()
+                    .to_string(),
+            )
         };
-        Ok(TestResult { ok, latency_ms, tmux, message })
+        Ok(TestResult {
+            ok,
+            latency_ms,
+            tmux,
+            message,
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -244,16 +335,30 @@ pub struct RemoteInfo {
 const DETECT_SCRIPT: &str = r#"setopt nonomatch >/dev/null 2>&1; export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$PATH"; nvm_alias="$HOME/.nvm/alias/default"; nvm_default=$(cat "$nvm_alias" 2>/dev/null); nvm_default_bin="$HOME/.nvm/versions/node/$nvm_default/bin"; if [ -f "$nvm_alias" ] && printf '%s\n' "$nvm_default" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' && [ -d "$nvm_default_bin" ]; then PATH="$nvm_default_bin:$PATH"; else for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && PATH="$d:$PATH"; done; fi; export PATH; . /etc/os-release 2>/dev/null; echo "OS=${PRETTY_NAME:-$(uname -s)}"; tmux -V 2>/dev/null | sed 's/^/TMUX=/'; command -v claude 2>/dev/null | sed 's/^/CLAUDE=/'; command -v codex 2>/dev/null | sed 's/^/CODEX=/'; for pm in apt-get dnf yum pacman apk zypper; do command -v $pm >/dev/null 2>&1 && { echo "PM=$pm"; break; }; done"#;
 
 #[tauri::command]
-pub async fn detect_remote(db: State<'_, Db>, host_id: String) -> Result<RemoteInfo, String> {
+pub async fn detect_remote(
+    app: AppHandle,
+    db: State<'_, Db>,
+    vault: State<'_, Vault>,
+    host_id: String,
+) -> Result<RemoteInfo, String> {
     let host = db::get_host(&db, &host_id)?;
+    let askpass = helper_askpass(
+        &app,
+        &db,
+        &vault,
+        host.credential_ref.as_deref(),
+        &format!("detect-{host_id}"),
+    );
     tauri::async_runtime::spawn_blocking(move || {
         let target = target_of(&host.user, &host.host)?;
         let output = run_with_timeout(
-            ssh_command(&target, host.port, DETECT_SCRIPT),
+            ssh_command(&target, host.port, DETECT_SCRIPT, askpass.as_ref()),
             REMOTE_COMMAND_TIMEOUT,
             None,
             "detecção remota",
-        )?;
+        );
+        drop(askpass); // apaga o segredo assim que o ssh retorna
+        let output = output?;
         if !output.status.success() && output.stdout.is_empty() {
             return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
         }
@@ -299,6 +404,7 @@ pub struct InstallAuth {
 
 #[tauri::command]
 pub async fn install_tmux(
+    app: AppHandle,
     db: State<'_, Db>,
     vault: State<'_, Vault>,
     host_id: String,
@@ -355,6 +461,14 @@ pub async fn install_tmux(
         (None, Some(pwd)) if !pwd.is_empty() => Some(pwd),
         _ => None,
     };
+    // Senha SSH (login) via askpass; a senha do SUDO continua só no stdin.
+    let askpass = helper_askpass(
+        &app,
+        &db,
+        &vault,
+        host.credential_ref.as_deref(),
+        &format!("install-{host_id}"),
+    );
 
     tauri::async_runtime::spawn_blocking(move || {
         let target = target_of(&host.user, &host.host)?;
@@ -368,11 +482,13 @@ pub async fn install_tmux(
         };
         let remote_cmd = format!("{sudo} 2>&1 && printf '__HELM_TMUX__'; tmux -V 2>/dev/null");
         let output = run_with_timeout(
-            ssh_command(&target, host.port, &remote_cmd),
+            ssh_command(&target, host.port, &remote_cmd, askpass.as_ref()),
             INSTALL_TIMEOUT,
             password.as_ref().map(|pwd| pwd.as_bytes()),
             "instalação remota",
-        )?;
+        );
+        drop(askpass); // apaga o segredo assim que o ssh retorna
+        let output = output?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let version = stdout
             .split("__HELM_TMUX__")
@@ -394,4 +510,78 @@ pub async fn install_tmux(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ssh_command, HostDraft};
+    use crate::session::askpass_attempt::create_in;
+    use std::ffi::OsStr;
+
+    fn args(cmd: &std::process::Command) -> Vec<String> {
+        cmd.get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    fn env_of<'a>(cmd: &'a std::process::Command, key: &str) -> Option<Option<&'a OsStr>> {
+        cmd.get_envs().find(|(k, _)| *k == key).map(|(_, v)| v)
+    }
+
+    #[test]
+    fn sem_askpass_mantem_batchmode_e_limpa_ambiente() {
+        let cmd = ssh_command("deploy@example.com", Some(2222), "true", None);
+        let args = args(&cmd);
+        assert!(args.contains(&"BatchMode=yes".to_string()));
+        assert!(!args
+            .iter()
+            .any(|a| a.starts_with("NumberOfPasswordPrompts")));
+        // variáveis herdadas são removidas (Some(None) = env_remove)
+        assert_eq!(env_of(&cmd, "SSH_ASKPASS"), Some(None));
+        assert_eq!(env_of(&cmd, "HELM_ASKPASS_SECRET"), Some(None));
+        let sep = args.iter().position(|a| a == "--").unwrap();
+        assert_eq!(args[sep + 1], "deploy@example.com");
+    }
+
+    #[test]
+    fn com_askpass_troca_batchmode_pelo_helper_one_shot() {
+        let base = std::env::temp_dir().join(format!("helm-remote-askpass-{}", std::process::id()));
+        let askpass = create_in(&base, "t", "s3cr3t").unwrap();
+        let cmd = ssh_command("deploy@example.com", None, "true", Some(&askpass));
+        let args = args(&cmd);
+        assert!(!args.contains(&"BatchMode=yes".to_string()));
+        assert!(args.contains(&"NumberOfPasswordPrompts=1".to_string()));
+        assert_eq!(
+            env_of(&cmd, "SSH_ASKPASS_REQUIRE"),
+            Some(Some(OsStr::new("force")))
+        );
+        assert_eq!(
+            env_of(&cmd, "HELM_ASKPASS_MODE"),
+            Some(Some(OsStr::new("1")))
+        );
+        assert_eq!(
+            env_of(&cmd, "HELM_ASKPASS_SECRET_FILE"),
+            Some(Some(askpass.secret_file.as_os_str()))
+        );
+        // o segredo nunca vai para argv nem para o ambiente
+        assert!(!args.iter().any(|a| a.contains("s3cr3t")));
+        assert!(!cmd
+            .get_envs()
+            .any(|(_, v)| v.is_some_and(|v| v.to_string_lossy().contains("s3cr3t"))));
+        let path = askpass.secret_file.clone();
+        drop(askpass);
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn rascunho_sem_credential_ref_continua_valido() {
+        let draft: HostDraft =
+            serde_json::from_str(r#"{"user":null,"host":"h","port":null}"#).unwrap();
+        assert!(draft.credential_ref.is_none());
+        let draft: HostDraft =
+            serde_json::from_str(r#"{"user":"u","host":"h","port":22,"credentialRef":"c1"}"#)
+                .unwrap();
+        assert_eq!(draft.credential_ref.as_deref(), Some("c1"));
+    }
 }

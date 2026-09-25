@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Titlebar } from "./components/Titlebar";
 import { Sidebar } from "./components/Sidebar";
 import { TabsToolbar } from "./components/TabsToolbar";
-import { TerminalView } from "./components/TerminalView";
+import { AttentionToast, TerminalView } from "./components/TerminalView";
 import { GridView } from "./components/GridView";
 import { StatusBar } from "./components/StatusBar";
 import { Inspector } from "./components/Inspector";
@@ -18,6 +18,9 @@ import { detachTab } from "./lib/termRegistry";
 import { useHostsStore } from "./stores/hosts";
 import { useSessionsStore } from "./stores/sessions";
 import { useUiStore } from "./stores/ui";
+import { useVaultStore } from "./stores/vault";
+import { useVpnStore } from "./stores/vpn";
+import { isAppShortcut } from "./lib/platform";
 import { useLangStore } from "./i18n";
 import { sessionUsesTmux } from "./types";
 
@@ -40,21 +43,38 @@ export default function App() {
     void loadLang();
   }, [loadPrefs, loadLang]);
 
-  // atalhos globais: palette, detach e visibilidade dos painéis laterais
+  // atalhos globais: palette, detach e visibilidade dos painéis laterais.
+  // Com um modal (ou o cofre) aberto só o Escape vale — fecha o que estiver no topo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      const ui = useUiStore.getState();
+      const vault = useVaultStore.getState();
+      if (e.key === "Escape") {
+        // a palette trata o próprio Escape (CommandPalette)
+        if (ui.paletteOpen) return;
+        if (ui.modal) ui.closeModal();
+        if (vault.modalOpen) vault.closeModal();
+        const vpn = useVpnStore.getState();
+        if (vpn.panelOpen) vpn.togglePanel(false);
+        return;
+      }
+      if (ui.modal || vault.modalOpen) return;
+
+      const shortcut = isAppShortcut(e);
+      if (shortcut === "palette") {
         e.preventDefault();
         togglePalette();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+      } else if (shortcut === "sidebar") {
         e.preventDefault();
-        if (e.altKey) toggleInspector();
-        else toggleSidebar();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d") {
+        toggleSidebar();
+      } else if (shortcut === "inspector") {
+        e.preventDefault();
+        toggleInspector();
+      } else if (shortcut === "detach") {
         const { sessions, activeId } = useSessionsStore.getState();
         const active = sessions.find((s) => s.id === activeId);
         const host = active && useHostsStore.getState().hosts.find((h) => h.id === active.hostId);
-        if (active && sessionUsesTmux(active, host || undefined)) {
+        if (active && active.status === "connected" && sessionUsesTmux(active, host || undefined)) {
           e.preventDefault();
           detachTab(active.id);
         }
@@ -79,7 +99,10 @@ export default function App() {
         </div>
         <div className="main">
           <TabsToolbar />
-          {showEmpty ? <EmptyState /> : view === "term" ? <TerminalView /> : <GridView />}
+          <div className="main__view">
+            {showEmpty ? <EmptyState /> : view === "term" ? <TerminalView /> : <GridView />}
+            <AttentionToast />
+          </div>
           <StatusBar />
         </div>
         <div

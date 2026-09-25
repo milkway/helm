@@ -6,6 +6,7 @@ export type View = "term" | "grid";
 export type GridCols = 2 | 3 | 4;
 export type Theme = "dark" | "light";
 export type Agent = "claude" | "codex";
+export type SessionMode = "shell" | "tmux" | "clmux";
 
 export type Modal =
   | { kind: "addHost" }
@@ -31,6 +32,8 @@ interface UiState {
   inspectorHidden: boolean;
   theme: Theme;
   defaultAgent: Agent;
+  /** último modo usado na Nova sessão (null = usa o startupMode do host) */
+  lastSessionMode: SessionMode | null;
   autoTmux: { hostId: string; phase: "detecting" | "unlocking" | "installing" } | null;
   setView: (view: View) => void;
   setGridCols: (cols: GridCols) => void;
@@ -43,6 +46,7 @@ interface UiState {
   toggleTheme: () => void;
   setTheme: (theme: Theme) => void;
   setDefaultAgent: (agent: Agent) => void;
+  setLastSessionMode: (mode: SessionMode) => void;
   setAutoTmux: (state: UiState["autoTmux"]) => void;
   /** carrega preferências persistidas (ui_prefs no SQLite) */
   loadPrefs: () => Promise<void>;
@@ -66,10 +70,16 @@ export const useUiStore = create<UiState>((set, get) => ({
   inspectorHidden: false,
   theme: "dark",
   defaultAgent: "claude",
+  lastSessionMode: null,
   autoTmux: null,
   openModal: (modal) => set({ modal, paletteOpen: false }),
   closeModal: () => set({ modal: null }),
-  togglePalette: (open) => set((s) => ({ paletteOpen: open ?? !s.paletteOpen })),
+  // com um modal aberto a palette não abre (ficaria empilhada sobre ele)
+  togglePalette: (open) =>
+    set((s) => {
+      const paletteOpen = open ?? !s.paletteOpen;
+      return paletteOpen && s.modal ? {} : { paletteOpen };
+    }),
   setAutoTmux: (autoTmux) => set({ autoTmux }),
 
   toggleSidebar: () => {
@@ -95,6 +105,11 @@ export const useUiStore = create<UiState>((set, get) => ({
     void invoke("set_pref", { key: "ui.defaultAgent", value: defaultAgent });
   },
 
+  setLastSessionMode: (lastSessionMode) => {
+    set({ lastSessionMode });
+    void invoke("set_pref", { key: "ui.lastSessionMode", value: lastSessionMode });
+  },
+
   toggleTheme: () => get().setTheme(get().theme === "dark" ? "light" : "dark"),
 
   toggleGroup: (name) => {
@@ -118,7 +133,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   loadPrefs: async () => {
     const getPref = (key: string) =>
       invoke<string | null>("get_pref", { key }).catch(() => null);
-    const [view, cols, collapsed, savedSidebar, savedInspector, savedTheme, savedAgent] =
+    const [view, cols, collapsed, savedSidebar, savedInspector, savedTheme, savedAgent, savedMode] =
       await Promise.all([
         getPref("view"),
         getPref("gridCols"),
@@ -127,6 +142,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         getPref("ui.inspectorHidden"),
         getPref("ui.theme"),
         getPref("ui.defaultAgent"),
+        getPref("ui.lastSessionMode"),
       ]);
     let collapsedGroups: string[] = [];
     try {
@@ -143,6 +159,8 @@ export const useUiStore = create<UiState>((set, get) => ({
       inspectorHidden: savedInspector === "1",
       theme,
       defaultAgent: savedAgent === "codex" ? "codex" : "claude",
+      lastSessionMode:
+        savedMode === "shell" || savedMode === "tmux" || savedMode === "clmux" ? savedMode : null,
     });
     applyTheme(theme);
   },

@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { importSshConfig } from "../lib/ipc";
-import { detachTab } from "../lib/termRegistry";
+import { closeTab, detachTab } from "../lib/termRegistry";
+import { IS_MAC, modKey, shortcutLabel } from "../lib/platform";
 import { useHostsStore } from "../stores/hosts";
 import { useVpnStore } from "../stores/vpn";
 import { useSessionsStore } from "../stores/sessions";
 import { useUiStore } from "../stores/ui";
-import { sessionUsesTmux, statusColor, tmuxSessionName, type Host, type SessionInfo } from "../types";
+import { useVaultStore } from "../stores/vault";
+import { sessionUsesTmux, statusColor, tmuxSessionName, type Host, sessionStatusText } from "../types";
 import { useT } from "../i18n";
 
 interface Item {
@@ -19,24 +21,6 @@ interface Item {
   run: () => void;
 }
 
-function sessionStatusText(s: SessionInfo, t: (k: string, v?: Record<string, string | number>) => string): string {
-  switch (s.status) {
-    case "connected":
-      return t("sess.connected");
-    case "connecting":
-      return t("sess.connecting");
-    case "reconnecting":
-      return t("sess.reconnecting", { n: s.attempt ?? 1 });
-    case "vpn":
-      return t("sess.vpn");
-    case "error":
-      return t("sess.error");
-    case "detached":
-      return t("sess.detached");
-    default:
-      return t("sess.exited");
-  }
-}
 
 export function CommandPalette() {
   const t = useT();
@@ -51,8 +35,16 @@ export function CommandPalette() {
   const hosts = useHostsStore((s) => s.hosts);
   const loadHosts = useHostsStore((s) => s.load);
   const toggleVpnPanel = useVpnStore((s) => s.togglePanel);
+  const view = useUiStore((s) => s.view);
+  const setView = useUiStore((s) => s.setView);
+  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  const toggleInspector = useUiStore((s) => s.toggleInspector);
+  const openVault = useVaultStore((s) => s.openModal);
   const [query, setQuery] = useState("");
   const [sel, setSel] = useState(0);
+  /** aviso transitório no topo da palette (ex.: resultado do import) */
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -62,6 +54,21 @@ export function CommandPalette() {
       setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [open]);
+
+  useEffect(
+    () => () => {
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    },
+    [],
+  );
+
+  // sem sistema de toasts: reabre a palette com o aviso por 3 s
+  const showNotice = (text: string) => {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    setNotice(text);
+    togglePalette(true);
+    noticeTimer.current = setTimeout(() => setNotice(null), 3000);
+  };
 
   const hostOf = (id: string): Host | undefined => hosts.find((h) => h.id === id);
   const activeSession = sessions.find((s) => s.id === activeId);
@@ -84,6 +91,23 @@ export function CommandPalette() {
         },
       });
     }
+    for (const h of hosts) {
+      list.push({
+        key: `host-${h.id}`,
+        section: t("pal.hosts"),
+        label: h.name,
+        sub: h.user ? `${h.user}@${h.host}` : h.host,
+        hint: t("pal.open"),
+        icon: "›",
+        run: () => {
+          // foca a sessão existente do host; senão abre uma nova
+          const existing = sessions.find((s) => s.hostId === h.id);
+          if (existing) focus(existing.id);
+          else openSession(h.id);
+          togglePalette(false);
+        },
+      });
+    }
     // comandos contextuais à sessão ativa
     if (activeHost) {
       list.push({
@@ -93,7 +117,7 @@ export function CommandPalette() {
           host: activeHost.name,
           agent: defaultAgent === "codex" ? t("ns.codex") : t("ns.claude"),
         }),
-        hint: "⌘⏎",
+        hint: `${modKey()}⏎`,
         icon: "cl",
         run: () => {
           openSession(activeHost.id, {
@@ -110,7 +134,7 @@ export function CommandPalette() {
           key: "cmd-detach",
           section: t("pal.commands"),
           label: t("pal.detach", { host: activeHost.name }),
-          hint: "⌘D",
+          hint: shortcutLabel("D"),
           icon: "⏏",
           run: () => {
             detachTab(activeSession.id);
@@ -126,6 +150,60 @@ export function CommandPalette() {
         run: () => openModal({ kind: "installTmux", hostId: activeHost.id }),
       });
     }
+    if (activeSession) {
+      list.push({
+        key: "cmd-closetab",
+        section: t("pal.commands"),
+        label: t("pal.closeTab", { host: activeHost?.name ?? activeSession.hostId }),
+        icon: "×",
+        run: () => {
+          closeTab(activeSession.id);
+          togglePalette(false);
+        },
+      });
+    }
+    list.push({
+      key: "cmd-view",
+      section: t("pal.commands"),
+      label: view === "term" ? t("pal.gridView") : t("pal.termView"),
+      icon: "▦",
+      run: () => {
+        setView(view === "term" ? "grid" : "term");
+        togglePalette(false);
+      },
+    });
+    list.push({
+      key: "cmd-sidebar",
+      section: t("pal.commands"),
+      label: t("pal.toggleSidebar"),
+      hint: shortcutLabel("B"),
+      icon: "◧",
+      run: () => {
+        toggleSidebar();
+        togglePalette(false);
+      },
+    });
+    list.push({
+      key: "cmd-inspector",
+      section: t("pal.commands"),
+      label: t("pal.toggleInspector"),
+      hint: shortcutLabel("B", true),
+      icon: "◨",
+      run: () => {
+        toggleInspector();
+        togglePalette(false);
+      },
+    });
+    list.push({
+      key: "cmd-vault",
+      section: t("pal.commands"),
+      label: t("pal.vault"),
+      icon: "⚿",
+      run: () => {
+        togglePalette(false);
+        openVault();
+      },
+    });
     list.push({
       key: "cmd-newhost",
       section: t("pal.commands"),
@@ -147,7 +225,12 @@ export function CommandPalette() {
       icon: "⇩",
       run: () => {
         togglePalette(false);
-        void importSshConfig().then(() => loadHosts());
+        void importSshConfig()
+          .then(async (n) => {
+            if (n > 0) await loadHosts();
+            showNotice(n > 0 ? t("pal.imported", { n }) : t("pal.importNone"));
+          })
+          .catch((e) => showNotice(t("pal.importError", { msg: String(e) })));
       },
     });
     list.push({
@@ -168,7 +251,7 @@ export function CommandPalette() {
       run: () => openModal({ kind: "about" }),
     });
     return list;
-  }, [t, sessions, hosts, activeHost, activeSession, defaultAgent, focus, openSession, openModal, togglePalette, loadHosts, toggleVpnPanel]);
+  }, [t, sessions, hosts, activeHost, activeSession, defaultAgent, focus, openSession, openModal, togglePalette, loadHosts, toggleVpnPanel, view, setView, toggleSidebar, toggleInspector, openVault]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -194,7 +277,7 @@ export function CommandPalette() {
       setSel((s) => Math.max(s - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (e.metaKey) {
+      if (IS_MAC ? e.metaKey : e.ctrlKey) {
         // ação padrão: clmux se houver host ativo
         const clmux = filtered.find((it) => it.key === "cmd-clmux");
         (clmux ?? filtered[sel])?.run();
@@ -202,6 +285,8 @@ export function CommandPalette() {
         runSel();
       }
     } else if (e.key === "Escape") {
+      // não deixa o Escape chegar ao handler global (fecharia o painel de VPN por trás)
+      e.stopPropagation();
       togglePalette(false);
     }
   };
@@ -228,6 +313,7 @@ export function CommandPalette() {
           />
           <span className="palette__esc">{t("pal.esc")}</span>
         </div>
+        {notice && <div className="palette__notice">{notice}</div>}
         <div className="palette__list">
           {filtered.length === 0 && <div className="palette__empty">{t("pal.none")}</div>}
           {filtered.map((it) => {
@@ -261,7 +347,7 @@ export function CommandPalette() {
         <div className="palette__footer">
           <span>{t("pal.navigate")}</span>
           <span>{t("pal.open")}</span>
-          <span>{t("pal.default")}</span>
+          <span>{t("pal.default", { mod: modKey() })}</span>
         </div>
       </div>
     </div>

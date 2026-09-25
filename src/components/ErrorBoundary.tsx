@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { translate, useLangStore } from "../i18n";
 
 interface State {
   error: Error | null;
@@ -20,6 +21,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
 
   render() {
     if (this.state.error) {
+      // componente de classe: sem hook, lê o idioma direto do store
+      const lang = useLangStore.getState().lang;
       return (
         <div
           style={{
@@ -35,8 +38,24 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
           }}
         >
           <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 10 }}>
-            💥 Erro de render capturado
+            💥 {translate(lang, "eb.title")}
           </div>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            style={{
+              marginBottom: 14,
+              padding: "6px 14px",
+              borderRadius: 6,
+              border: "1px solid var(--accent)",
+              background: "transparent",
+              color: "var(--accent-hover)",
+              font: "inherit",
+              cursor: "pointer",
+            }}
+          >
+            {translate(lang, "eb.reload")}
+          </button>
           <div style={{ color: "var(--accent-hover)", marginBottom: 12 }}>
             {this.state.error.message}
           </div>

@@ -2,11 +2,11 @@ import { useMemo, useRef, useState } from "react";
 import { detectRemote, invalidateRemoteInfo, type RemoteInfo } from "../lib/ipc";
 import { useHostsStore } from "../stores/hosts";
 import { useSessionsStore } from "../stores/sessions";
-import { useUiStore, type Agent } from "../stores/ui";
+import { useUiStore, type Agent, type SessionMode } from "../stores/ui";
 import { statusColor, tmuxSessionName } from "../types";
 import { useT } from "../i18n";
 
-type Mode = "shell" | "tmux" | "clmux";
+type Mode = SessionMode;
 /** Nova sessão (projeto) — design 1c. */
 export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
   const t = useT();
@@ -16,11 +16,16 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
   const open = useSessionsStore((s) => s.open);
   const defaultAgent = useUiStore((s) => s.defaultAgent);
   const setDefaultAgent = useUiStore((s) => s.setDefaultAgent);
+  const lastSessionMode = useUiStore((s) => s.lastSessionMode);
+  const setLastSessionMode = useUiStore((s) => s.setLastSessionMode);
 
   const [hostId, setHostId] = useState(presetHostId ?? hosts[0]?.id ?? "");
   const [project, setProject] = useState("");
   const [dir, setDir] = useState("");
-  const [mode, setMode] = useState<Mode>("clmux");
+  // último modo usado; na falta dele, o modo de inicialização do host
+  const [mode, setMode] = useState<Mode>(
+    () => lastSessionMode ?? hosts.find((h) => h.id === hostId)?.startupMode ?? "shell",
+  );
   const [agent, setAgent] = useState<Agent>(defaultAgent);
   const [rememberAgent, setRememberAgent] = useState(false);
   const [remoteInfo, setRemoteInfo] = useState<{ hostId: string; info: RemoteInfo } | null>(null);
@@ -82,7 +87,7 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
       {
         id: "clmux" as Mode,
         title: t("ns.clmux"),
-        sub: `cd ${dir.trim() || "~"} · tmux · ${agent}`,
+        sub: `cd ${dir.trim() || "~"} · tmux · ${agent === "codex" ? t("ns.codex") : t("ns.claude")}`,
         badge: t("ns.default"),
       },
     ],
@@ -92,6 +97,7 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
   const submit = () => {
     if (!valid) return;
     if (mode === "clmux" && rememberAgent) setDefaultAgent(agent);
+    setLastSessionMode(mode);
     open(hostId, {
       mode,
       sessionName: mode === "shell" ? undefined : sessionName,
@@ -216,7 +222,7 @@ export function NewSessionModal({ presetHostId }: { presetHostId?: string }) {
                         )}
                         {!currentRemoteInfo && !probing && !probeFailed && (
                           <span className="hxm__agent-missing">
-                            {t("ns.notVerified")} · {t("ns.checkHost")}
+                            {t("ns.notVerified")}
                           </span>
                         )}
                         {probeFailed && !currentRemoteInfo && (

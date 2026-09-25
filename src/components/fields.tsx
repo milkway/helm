@@ -1,13 +1,20 @@
 import { useState } from "react";
+import { useT } from "../i18n";
 
 export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
-    <div className="hx-toggle" onClick={() => onChange(!on)}>
-      <div className={`hx-toggle__track${on ? " hx-toggle__track--on" : ""}`}>
-        <div className="hx-toggle__knob" />
-      </div>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      className="hx-toggle"
+      onClick={() => onChange(!on)}
+    >
+      <span className={`hx-toggle__track${on ? " hx-toggle__track--on" : ""}`}>
+        <span className="hx-toggle__knob" />
+      </span>
       <span className="hx-toggle__label">{label}</span>
-    </div>
+    </button>
   );
 }
 
@@ -35,6 +42,7 @@ export function PasswordField({
   onEnter?: () => void;
   autoFocus?: boolean;
 }) {
+  const t = useT();
   const [show, setShow] = useState(false);
   return (
     <div className="pwd-field">
@@ -49,7 +57,7 @@ export function PasswordField({
       />
       <span
         className="pwd-field__eye"
-        title={show ? "Ocultar" : "Mostrar"}
+        title={show ? t("fld.hide") : t("fld.show")}
         onClick={() => setShow((v) => !v)}
       >
         <EyeIcon off={show} />
